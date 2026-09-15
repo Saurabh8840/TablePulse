@@ -1,0 +1,45 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Plus Jakarta Sans", system-ui, "Segoe UI", Roboto, "Noto Sans", sans-serif;
+
+  /* Brand — warm restaurant palette (mirrors MUI theme in styles/theme.js) */
+  --color-brand-50: #fff5ed;
+  --color-brand-100: #ffe8d5;
+  --color-brand-500: #ea580c;
+  --color-brand-600: #c2410c;
+  --color-brand-700: #9a3412;
+
+  --color-teal-accent: #0f766e;
+}
+
+/* Base: let Tailwind preflight + MUI CssBaseline own resets.
+   Keep the app frame fluid so mobile / tablet / desktop all work. */
+html,
+body {
+  margin: 0;
+}
+
+#root {
+  min-height: 100svh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Customer food-app helpers */
+.clamp-1, .clamp-2 {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.clamp-1 { -webkit-line-clamp: 1; line-clamp: 1; }
+.clamp-2 { -webkit-line-clamp: 2; line-clamp: 2; }
+
+.no-scrollbar { scrollbar-width: none; -ms-overflow-style: none; }
+.no-scrollbar::-webkit-scrollbar { display: none; }
+
+.sticky-bar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+}

@@ -1,0 +1,19 @@
+package com.tablepulse.auth.dto;
+
+import com.tablepulse.auth.Role;
+import lombok.AllArgsConstructor;
+import lombok.Data;
+
+import java.util.UUID;
+
+@Data
+@AllArgsConstructor
+public class UserResponse {
+    private UUID userId;
+    private UUID tenantId;
+    private String email;
+    private String fullName;
+    private String phone;
+    private Role role;
+    private boolean active;
+}

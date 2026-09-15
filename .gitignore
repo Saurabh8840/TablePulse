@@ -1,0 +1,42 @@
+# Internal product docs (kept locally, never pushed to the public repo)
+PRD.md
+PROJECT_PLAN.md
+REQUIREMENTS.md
+TODO.md
+
+# Dependencies & build output
+node_modules/
+dist/
+dist-ssr/
+target/
+build/
+
+# Runtime uploads (food photos live on disk / S3, never in git)
+uploads/
+
+# Env files (never commit real secrets)
+.env
+.env.*
+!.env.example
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.suo
+*.iml
+*.ipr
+*.iws
+.project
+.classpath
+.settings/
+nbproject/private/
