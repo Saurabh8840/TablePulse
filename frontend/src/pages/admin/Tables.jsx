@@ -8,6 +8,7 @@ import {
   Button,
   Card,
   CardContent,
+  Checkbox,
   Chip,
   CircularProgress,
   Dialog,
@@ -15,6 +16,7 @@ import {
   DialogContent,
   DialogTitle,
   IconButton,
+  MenuItem,
   TextField,
   Tooltip,
   Typography,
@@ -22,7 +24,8 @@ import {
 import { useEffect, useState } from 'react';
 import { Link as RouterLink, useParams } from 'react-router-dom';
 import PageHeader from '../../components/layout/PageHeader.jsx';
-import { bulkCreateTables, createTable, deactivateTable, fetchQrPng, listTables } from '../../services/tables.js';
+import { listStaff } from '../../services/staff.js';
+import { assignTableWaiter, bulkCreateTables, bulkDeleteTables, createTable, fetchQrPng, listTables } from '../../services/tables.js';
 
 const STATUS_COLOR = { AVAILABLE: 'success', OCCUPIED: 'warning', RESERVED: 'info' };
 
@@ -36,11 +39,22 @@ export default function Tables() {
   const [bulk, setBulk] = useState({ prefix: 'T', from: 1, to: 20, seatingCapacity: 4 });
   const [formError, setFormError] = useState(null);
   const [qr, setQr] = useState(null); // { url, payload, number }
+  const [waiters, setWaiters] = useState([]);
+  const [selected, setSelected] = useState([]); // table ids marked for delete
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteResult, setDeleteResult] = useState(null); // { deleted, blocked }
 
   const load = () =>
     listTables(branchId)
       .then((r) => setRows(r.data))
       .catch((e) => setError(e.message));
+
+  useEffect(() => {
+    listStaff()
+      .then((r) => setWaiters((r.data ?? []).filter((u) => u.role === 'WAITER' && u.active)))
+      .catch(() => setWaiters([]));
+  }, []);
 
   useEffect(() => {
     load();
@@ -90,16 +104,44 @@ export default function Tables() {
     }
   }
 
-  async function onDeactivate(id) {
-    await deactivateTable(id);
-    load();
+  const toggleSelect = (id) =>
+    setSelected((s) => (s.includes(id) ? s.filter((v) => v !== id) : [...s, id]));
+
+  const selectedTables = (rows ?? []).filter((t) => selected.includes(t.id));
+
+  async function onConfirmDelete() {
+    setDeleting(true);
+    try {
+      const res = await bulkDeleteTables(branchId, selected);
+      setDeleteResult(res.data);
+      setSelected([]);
+      setDeleteOpen(false);
+      load();
+    } catch (err) {
+      setError(err.message);
+      setDeleteOpen(false);
+    } finally {
+      setDeleting(false);
+    }
   }
+
+  async function onAssign(t, waiterId) {
+    try {
+      await assignTableWaiter(t.id, waiterId || null);
+      load();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  const activeRows = (rows ?? []).filter((t) => t.active);
+  const unassigned = activeRows.filter((t) => !t.assignedWaiterId).length;
 
   return (
     <Box>
       <PageHeader
         title="Tables & QR codes"
-        subtitle={`${rows?.length ?? 0} tables · scan a code to open that table's menu`}
+        subtitle={`${activeRows.length} tables · scan a code to open that table's menu`}
         actions={
           <>
             <Button component={RouterLink} to="/admin/restaurants" startIcon={<ArrowBackIcon />} variant="text">
@@ -108,6 +150,11 @@ export default function Tables() {
             <Button variant="outlined" onClick={() => setBulkOpen(true)}>
               Bulk create
             </Button>
+            {selected.length > 0 && (
+              <Button variant="outlined" color="error" onClick={() => { setDeleteResult(null); setDeleteOpen(true); }}>
+                Delete ({selected.length})
+              </Button>
+            )}
             <Button variant="contained" startIcon={<AddIcon />} onClick={() => setAddOpen(true)}>
               Add table
             </Button>
@@ -115,10 +162,34 @@ export default function Tables() {
         }
       />
       {error && <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>{error}</Alert>}
+      {deleteResult && (
+        <Alert
+          severity={deleteResult.blocked?.length > 0 ? 'warning' : 'success'}
+          sx={{ mb: 2 }}
+          onClose={() => setDeleteResult(null)}
+        >
+          Deleted {deleteResult.deleted?.length ?? 0} table{(deleteResult.deleted?.length ?? 0) === 1 ? '' : 's'}
+          {(deleteResult.deleted ?? []).length > 0 && `: ${deleteResult.deleted.join(', ')}`}
+          {(deleteResult.blocked ?? []).map((b) => ` · ${b.tableNumber}: ${b.reason}`).join('')}
+        </Alert>
+      )}
       {rows === null && <CircularProgress />}
+      {rows !== null && unassigned > 0 && (
+        <Alert severity="warning" sx={{ mb: 2 }}>
+          ⚠️ {unassigned} table{unassigned === 1 ? ' has' : 's have'} no waiter — house for now, any waiter can serve.
+          Assign every table so each waiter owns their floor.
+        </Alert>
+      )}
       <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: 'repeat(2, 1fr)', sm: 'repeat(3, 1fr)', lg: 'repeat(4, 1fr)', xl: 'repeat(5, 1fr)' } }}>
         {(rows ?? []).filter((t) => t.active).map((t) => (
-          <Card key={t.id} sx={{ '&:hover': { boxShadow: 4 } }}>
+          <Card key={t.id} sx={{ '&:hover': { boxShadow: 4 }, position: 'relative', ...(selected.includes(t.id) && { borderColor: 'error.main', borderWidth: 2 }) }} variant="outlined">
+            <Checkbox
+              size="small"
+              checked={selected.includes(t.id)}
+              onChange={() => toggleSelect(t.id)}
+              sx={{ position: 'absolute', top: 4, left: 4 }}
+              slotProps={{ input: { 'aria-label': `select table ${t.tableNumber}` } }}
+            />
             <CardContent sx={{ textAlign: 'center' }}>
               <Typography variant="h5" fontWeight={800}>
                 {t.tableNumber}
@@ -129,14 +200,28 @@ export default function Tables() {
               <Box sx={{ my: 1 }}>
                 <Chip size="small" color={STATUS_COLOR[t.status] ?? 'default'} label={t.status} />
               </Box>
+              <TextField
+                select
+                size="small"
+                fullWidth
+                label="Waiter"
+                value={t.assignedWaiterId ?? ''}
+                onChange={(e) => onAssign(t, e.target.value)}
+                sx={{ mb: 1 }}
+              >
+                <MenuItem value="">🏠 House (any waiter)</MenuItem>
+                {waiters.map((w) => (
+                  <MenuItem key={w.userId} value={w.userId}>{w.fullName}</MenuItem>
+                ))}
+              </TextField>
               <Box sx={{ display: 'flex', justifyContent: 'center', gap: 0.5 }}>
                 <Tooltip title="Show QR code">
                   <IconButton size="small" onClick={() => openQr(t)}>
                     <QrCodeIcon fontSize="small" />
                   </IconButton>
                 </Tooltip>
-                <Tooltip title="Deactivate table">
-                  <IconButton size="small" onClick={() => onDeactivate(t.id)}>
+                <Tooltip title="Delete table (keeps order history)">
+                  <IconButton size="small" onClick={() => { setSelected([t.id]); setDeleteResult(null); setDeleteOpen(true); }}>
                     <DeleteIcon fontSize="small" />
                   </IconButton>
                 </Tooltip>
@@ -183,6 +268,27 @@ export default function Tables() {
             <Button type="submit" variant="contained">Create</Button>
           </DialogActions>
         </Box>
+      </Dialog>
+
+      <Dialog open={deleteOpen} onClose={() => setDeleteOpen(false)} fullWidth maxWidth="xs">
+        <DialogTitle>
+          Delete {selectedTables.length} table{selectedTables.length === 1 ? '' : 's'}?
+        </DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" sx={{ mb: 1 }}>
+            {selectedTables.map((t) => t.tableNumber).join(', ')}
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            Past orders and bills are kept. Their QR codes stop working, and the numbers can be
+            reused later. Occupied tables are skipped automatically.
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDeleteOpen(false)}>Cancel</Button>
+          <Button color="error" variant="contained" disabled={deleting} onClick={onConfirmDelete}>
+            {deleting ? 'Deleting…' : 'Delete'}
+          </Button>
+        </DialogActions>
       </Dialog>
 
       <Dialog open={!!qr} onClose={() => setQr(null)} fullWidth maxWidth="xs">

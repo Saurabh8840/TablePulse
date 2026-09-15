@@ -1,11 +1,12 @@
 import { Alert, Box, Button, Card, CardContent, TextField, Typography } from '@mui/material';
 import { useState } from 'react';
-import { Link as RouterLink, useNavigate } from 'react-router-dom';
+import { Link as RouterLink, Navigate, useNavigate } from 'react-router-dom';
 import BrandPanel from '../../components/BrandPanel.jsx';
 import { useAuth } from '../../hooks/useAuth.js';
+import { homeForRole } from '../../utils/roles.js';
 
 export default function Login() {
-  const { login } = useAuth();
+  const { user, login } = useAuth();
   const navigate = useNavigate();
   const [form, setForm] = useState({ email: '', password: '' });
   const [error, setError] = useState(null);
@@ -13,13 +14,15 @@ export default function Login() {
 
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
 
+  if (user) return <Navigate to={homeForRole(user.role)} replace />;
+
   async function onSubmit(e) {
     e.preventDefault();
     setError(null);
     setBusy(true);
     try {
-      await login(form);
-      navigate('/admin');
+      const res = await login(form);
+      navigate(homeForRole(res.data?.user?.role), { replace: true });
     } catch (err) {
       setError(err.message);
     } finally {

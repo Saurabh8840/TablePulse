@@ -9,11 +9,14 @@ import {
   CardContent,
   Chip,
   CircularProgress,
+  Collapse,
   FormControl,
   InputLabel,
   MenuItem,
   Paper,
   Select,
+  Switch,
+  TextField,
   ToggleButton,
   ToggleButtonGroup,
   Typography,
@@ -21,6 +24,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import PageHeader from '../../components/layout/PageHeader.jsx';
 import { searchOrders, updateOrderStatus } from '../../services/kitchen.js';
+import { listCategories, listItems, setAvailability } from '../../services/menu.js';
 import { listBranches, listRestaurants } from '../../services/restaurant.js';
 
 const BRANCH_KEY = 'tp_kds_branch';
@@ -149,6 +153,12 @@ export default function KitchenBoard() {
   const [sound, setSound] = useState(true);
   const [mobileTab, setMobileTab] = useState('NEW');
   const [tick, setTick] = useState(0);
+  // 86-board: kitchen-owned availability toggles (Phase 5b). Loaded lazily per restaurant.
+  const [availOpen, setAvailOpen] = useState(false);
+  const [availItems, setAvailItems] = useState(null);
+  const [availLoading, setAvailLoading] = useState(false);
+  const [availQuery, setAvailQuery] = useState('');
+  const [availMsg, setAvailMsg] = useState(null);
   const knownIds = useRef(new Set());
 
   // Restaurants on mount
@@ -232,6 +242,45 @@ export default function KitchenBoard() {
     }
   }
 
+  async function loadAvail() {
+    if (!restaurantId) return;
+    setAvailLoading(true);
+    try {
+      const cats = (await listCategories(restaurantId)).data ?? [];
+      const per = await Promise.all(
+        cats.filter((c) => c.active !== false).map(async (c) => {
+          const items = (await listItems(c.id)).data ?? [];
+          return items
+            .filter((i) => i.active !== false)
+            .map((i) => ({ ...i, categoryName: c.name }));
+        }),
+      );
+      setAvailItems(per.flat());
+      setError(null);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setAvailLoading(false);
+    }
+  }
+
+  function onAvailToggle() {
+    if (!availOpen && availItems === null) loadAvail();
+    setAvailOpen((o) => !o);
+  }
+
+  async function toggleAvail(item) {
+    try {
+      const res = await setAvailability(item.id, !item.available);
+      const row = res.data ?? { ...item, available: !item.available };
+      setAvailItems((list) => (list ?? []).map((i) => (i.id === item.id ? { ...i, ...row } : i)));
+      setAvailMsg(`${item.name} marked ${row.available ? 'available ✓' : 'sold out ✓'}`);
+      setTimeout(() => setAvailMsg(null), 3000);
+    } catch (e) {
+      setError(e.message);
+    }
+  }
+
   const grouped = useMemo(() => {
     const map = { NEW: [], PREP: [], READY: [] };
     for (const o of orders) {
@@ -292,6 +341,88 @@ export default function KitchenBoard() {
           </Select>
         </FormControl>
       </Paper>
+
+      {branchId && (
+        <Paper variant="outlined" sx={{ borderRadius: 3, mb: 2 }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1.5 }}>
+            <Typography variant="subtitle1" fontWeight={800} sx={{ flexGrow: 1 }}>
+              🔴 Menu availability (86-board)
+            </Typography>
+            {availItems !== null && (
+              <Chip
+                size="small"
+                label={`${availItems.filter((i) => !i.available).length} sold out`}
+                color={availItems.some((i) => !i.available) ? 'warning' : 'default'}
+              />
+            )}
+            <Button size="small" variant="outlined" onClick={onAvailToggle}>
+              {availOpen ? 'Hide' : 'Manage'}
+            </Button>
+            <Button size="small" variant="text" onClick={loadAvail} disabled={!availOpen || availLoading}>
+              Refresh
+            </Button>
+          </Box>
+          <Collapse in={availOpen}>
+            <Box sx={{ px: 1.5, pb: 1.5 }}>
+              {availMsg && <Alert severity="success" sx={{ mb: 1 }}>{availMsg}</Alert>}
+              <TextField
+                size="small"
+                fullWidth
+                placeholder="Search items…"
+                value={availQuery}
+                onChange={(e) => setAvailQuery(e.target.value)}
+                sx={{ mb: 1 }}
+              />
+              {availLoading && availItems === null ? (
+                <Box sx={{ display: 'flex', justifyContent: 'center', py: 3 }}>
+                  <CircularProgress size={24} />
+                </Box>
+              ) : (
+                <Box sx={{ display: 'grid', gap: 0.75, maxHeight: 320, overflowY: 'auto' }}>
+                  {(availItems ?? [])
+                    .filter((i) => i.name.toLowerCase().includes(availQuery.trim().toLowerCase()))
+                    .map((i) => (
+                      <Box
+                        key={i.id}
+                        sx={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 1,
+                          p: 1,
+                          borderRadius: 2,
+                          border: 1,
+                          borderColor: 'divider',
+                          opacity: i.available ? 1 : 0.65,
+                        }}
+                      >
+                        <Switch
+                          size="small"
+                          checked={!!i.available}
+                          onChange={() => toggleAvail(i)}
+                          slotProps={{ input: { 'aria-label': `availability of ${i.name}` } }}
+                        />
+                        <Box sx={{ flexGrow: 1, minWidth: 0 }}>
+                          <Typography variant="body2" fontWeight={700} noWrap>
+                            {!i.available && '🔴 '}{i.name}
+                          </Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            {i.categoryName}
+                            {i.lastChangedBy && ` · by ${i.lastChangedBy}`}
+                          </Typography>
+                        </Box>
+                      </Box>
+                    ))}
+                  {availItems !== null && availItems.length === 0 && (
+                    <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', py: 2 }}>
+                      No items in this restaurant yet.
+                    </Typography>
+                  )}
+                </Box>
+              )}
+            </Box>
+          </Collapse>
+        </Paper>
+      )}
 
       {!branchId ? (
         <Alert severity="info">Pick a restaurant + branch to see its live orders. Log in as kitchen staff, manager or owner.</Alert>

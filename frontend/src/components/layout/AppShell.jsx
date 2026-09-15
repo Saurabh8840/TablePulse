@@ -8,6 +8,7 @@ import PersonAddIcon from '@mui/icons-material/PersonAdd';
 import RocketLaunchIcon from '@mui/icons-material/RocketLaunch';
 import SoupKitchenIcon from '@mui/icons-material/SoupKitchen';
 import StorefrontIcon from '@mui/icons-material/Storefront';
+import TableRestaurantIcon from '@mui/icons-material/TableRestaurant';
 import {
   AppBar,
   Avatar,
@@ -26,6 +27,7 @@ import {
 import { useState } from 'react';
 import { Link as RouterLink, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth.js';
+import { canSeeKitchen, canSeeWaiter, isManager } from '../../utils/roles.js';
 import ModeToggle from '../ModeToggle.jsx';
 
 const DRAWER_WIDTH = 264;
@@ -93,10 +95,11 @@ export default function AppShell({ children }) {
         <List dense disablePadding>
           <SectionLabel>General</SectionLabel>
           {item('/', 'Website', <HomeIcon />)}
-          {user && item('/admin', 'Dashboard', <DashboardIcon />)}
-          {user && item('/admin/restaurants', 'Restaurants', <StorefrontIcon />)}
-          {user && item('/kitchen', 'Kitchen Display', <SoupKitchenIcon />)}
-          {user && (user.role === 'OWNER' || user.role === 'MANAGER') && item('/admin/staff', 'Staff', <PeopleIcon />)}
+          {user && isManager(user) && item('/admin', 'Dashboard', <DashboardIcon />)}
+          {user && isManager(user) && item('/admin/restaurants', 'Restaurants', <StorefrontIcon />)}
+          {user && canSeeKitchen(user) && item('/kitchen', 'Kitchen Display', <SoupKitchenIcon />)}
+          {user && canSeeWaiter(user) && item('/waiter', 'Waiter Dashboard', <TableRestaurantIcon />)}
+          {user && isManager(user) && item('/admin/staff', 'Staff', <PeopleIcon />)}
           {!user && item('/login', 'Login', <LoginIcon />)}
           {!user && item('/register', 'Register', <PersonAddIcon />)}
         </List>
@@ -106,11 +109,11 @@ export default function AppShell({ children }) {
             <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', mb: 0.5 }}>
               <RocketLaunchIcon fontSize="small" />
               <Typography variant="subtitle2" fontWeight={800}>
-                Phase 5 is next
+                Phase 6 is next
               </Typography>
             </Box>
             <Typography variant="caption" sx={{ opacity: 0.9, display: 'block', mb: 1.5 }}>
-              Waiter dashboard — table grid + ready alerts.
+              Payments & billing — Razorpay/UPI + pay at counter.
             </Typography>
             <Button size="small" variant="contained" disabled
               sx={{ bgcolor: 'rgba(255,255,255,.2)', color: '#fff', '&.Mui-disabled': { color: 'rgba(255,255,255,.6)' } }}>

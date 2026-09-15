@@ -47,6 +47,15 @@ import {
 
 const EMPTY_ITEM = { name: '', description: '', price: '', vegetarian: false, preparationTimeMinutes: '' };
 
+function elapsedShort(iso) {
+  const min = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 60000));
+  if (min < 1) return 'just now';
+  if (min < 60) return `${min}m ago`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return `${h}h ${min % 60}m ago`;
+  return `${Math.floor(h / 24)}d ago`;
+}
+
 export default function MenuManager() {
   const { id: restaurantId } = useParams();
   const [cats, setCats] = useState(null);
@@ -237,8 +246,9 @@ export default function MenuManager() {
 
   async function onToggle(item, v) {
     try {
-      await setAvailability(item.id, v);
-      setItems((list) => list.map((i) => (i.id === item.id ? { ...i, available: v } : i)));
+      const res = await setAvailability(item.id, v);
+      // Use the server row so attribution (lastChangedBy/updatedAt) stays in sync.
+      setItems((list) => list.map((i) => (i.id === item.id ? { ...i, ...(res.data ?? { available: v }) } : i)));
     } catch (err) {
       setError(err.message);
     }
@@ -378,6 +388,12 @@ export default function MenuManager() {
                       slotProps={{ input: { 'aria-label': `availability of ${i.name}` } }}
                     />
                     <Typography variant="caption" color="text.secondary">Available</Typography>
+                    {i.lastChangedBy && (
+                      <Typography variant="caption" color="text.secondary" sx={{ width: '100%' }}>
+                        {!i.available ? '🔴 Sold out' : '🟢 Restocked'} · by {i.lastChangedBy}
+                        {i.updatedAt ? ` · ${elapsedShort(i.updatedAt)}` : ''}
+                      </Typography>
+                    )}
                     <Box sx={{ flexGrow: 1 }} />
                     {!inactive ? (
                       <>
