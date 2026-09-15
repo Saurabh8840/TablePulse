@@ -6,14 +6,16 @@
 
 ---
 
-## ✨ What works today (Phases 0–4)
+## ✨ What works today (Phases 0–5)
 
 - **Auth & multi-tenancy** — owner registration, JWT login, per-tenant data isolation, staff logins (manager / waiter / kitchen)
 - **Restaurant & menu setup** — restaurants, branches, tables with QR codes, categories, items with photos, veg/non-veg, modifiers
 - **Customer ordering** — QR → menu → item customization → cart → order tracking → session bill
 - **Kitchen Display (KDS)** — live NEW / PREPARING / READY board with timers, chime, and one-tap status flow
+- **Waiter floor** — table statuses, ready alerts, serve + close-session, waiter assignment
+- **Table ops** — occupied-guard deletes, bulk delete with partial success, number reuse for inactive tables
 
-Roadmap: waiter dashboard → payments & billing → analytics → deploy & pilot.
+Roadmap: payments & billing (mock next) → analytics → deploy & pilot.
 
 ---
 
@@ -66,7 +68,7 @@ CREATE USER tablepulse_user WITH PASSWORD 'tablepulse123';
 GRANT ALL PRIVILEGES ON DATABASE tablepulse_db TO tablepulse_user;
 ```
 
-Flyway runs migrations (`V1–V4`) automatically on backend start.
+Flyway runs migrations (`V1–V8`) automatically on backend start.
 
 ### 2. Backend (port 8081)
 
@@ -105,6 +107,7 @@ Defaults in `tablepulse-api/src/main/resources/application.yml` are **dev-only**
 | `APP_JWT_EXPIRATION` | `86400` | No |
 | `APP_UPLOAD_DIR` | `uploads` | No (use a persistent volume) |
 | `APP_PUBLIC_BASE_URL` | `https://tablepulse.in` | Yes — your real domain |
+| `APP_CORS_ORIGINS` | `http://localhost:5173` | Yes — comma-separated frontend origins |
 
 Example (PowerShell):
 
@@ -125,9 +128,11 @@ $env:APP_JWT_SECRET="random-32-plus-char-secret-here"
 POST /api/auth/register, /api/auth/login, GET/PUT /api/auth/me
 POST /api/staff, GET /api/staff              # owner/manager only
 CRUD /api/restaurants, /api/branches, /api/.../tables, /api/.../categories, /api/.../items
+POST /api/branches/{id}/tables/bulk-delete {tableIds}  # partial success: {deleted[], blocked[{tableNumber, reason}]}
 GET  /api/public/restaurants/{slug}, /{slug}/menu      # customer, no auth
 POST /api/public/sessions, /api/public/orders, GET .../bill
 GET  /api/orders, PATCH /api/orders/{id}/status        # staff (JWT)
+GET  /api/branches/{id}/tables/status, POST /api/sessions/{id}/close  # waiter floor
 ```
 
 ## 📄 License

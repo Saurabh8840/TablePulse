@@ -29,3 +29,4 @@ app:
     expiration-seconds: ${APP_JWT_EXPIRATION:86400}
   upload-dir: ${APP_UPLOAD_DIR:uploads}
   public-base-url: ${APP_PUBLIC_BASE_URL:https://tablepulse.in}
+  cors-origins: ${APP_CORS_ORIGINS:http://localhost:5173}
