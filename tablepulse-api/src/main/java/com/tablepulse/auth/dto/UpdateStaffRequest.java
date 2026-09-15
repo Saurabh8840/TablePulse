@@ -1,11 +1,15 @@
 package com.tablepulse.auth.dto;
 
-import jakarta.validation.constraints.NotNull;
 import lombok.Data;
+
+import java.util.List;
+import java.util.UUID;
 
 @Data
 public class UpdateStaffRequest {
 
-    @NotNull(message = "active is required")
     private Boolean active;
+
+    /** Replaces the waiter's table assignment (null = leave unchanged). */
+    private List<UUID> tableIds;
 }

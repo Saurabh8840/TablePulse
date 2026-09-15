@@ -7,6 +7,9 @@ import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 import lombok.Data;
 
+import java.util.List;
+import java.util.UUID;
+
 @Data
 public class CreateStaffRequest {
 
@@ -28,4 +31,7 @@ public class CreateStaffRequest {
 
     @NotNull(message = "Role is required")
     private Role role;
+
+    /** Tables this waiter owns (owner assigns at setup). Only for WAITER role. */
+    private List<UUID> tableIds;
 }

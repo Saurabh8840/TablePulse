@@ -1,5 +1,7 @@
 package com.tablepulse.order;
 
+import com.tablepulse.auth.User;
+import com.tablepulse.auth.UserRepository;
 import com.tablepulse.common.security.TenantGuard;
 import com.tablepulse.menu.MenuItem;
 import com.tablepulse.menu.MenuItemRepository;
@@ -22,6 +24,7 @@ import com.tablepulse.restaurant.BranchRepository;
 import com.tablepulse.restaurant.Restaurant;
 import com.tablepulse.table.RestaurantTable;
 import com.tablepulse.table.RestaurantTableRepository;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -38,6 +41,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 
@@ -56,6 +60,7 @@ public class OrderService {
     private final MenuItemRepository menuItems;
     private final ModifierGroupRepository modifierGroups;
     private final ModifierOptionRepository modifierOptions;
+    private final UserRepository users;
     private final TenantGuard guard;
 
     public OrderService(TableSessionRepository sessions, OrderRepository orders,
@@ -63,7 +68,7 @@ public class OrderService {
                         OrderNumberCounterRepository counters, RestaurantTableRepository tables,
                         BranchRepository branches, MenuItemRepository menuItems,
                         ModifierGroupRepository modifierGroups, ModifierOptionRepository modifierOptions,
-                        TenantGuard guard) {
+                        UserRepository users, TenantGuard guard) {
         this.sessions = sessions;
         this.orders = orders;
         this.orderItems = orderItems;
@@ -74,6 +79,7 @@ public class OrderService {
         this.menuItems = menuItems;
         this.modifierGroups = modifierGroups;
         this.modifierOptions = modifierOptions;
+        this.users = users;
         this.guard = guard;
     }
 
@@ -289,7 +295,10 @@ public class OrderService {
             case ACCEPTED -> order.setAcceptedAt(now);
             case PREPARING -> order.setPreparingAt(now);
             case READY -> order.setReadyAt(now);
-            case SERVED -> order.setServedAt(now);
+            case SERVED -> {
+                order.setServedAt(now);
+                order.setServedBy(currentUser());
+            }
             case REJECTED, CANCELLED -> {
                 order.setCancelledAt(now);
                 order.setCancellationReason(reason);
@@ -367,11 +376,28 @@ public class OrderService {
 
     private String nextOrderNumber(Branch branch) {
         LocalDate today = LocalDate.now(ZoneId.of("Asia/Kolkata"));
-        OrderNumberCounter counter = counters.findByBranchIdAndDay(branch.getId(), today)
-                .orElseGet(() -> counters.save(new OrderNumberCounter(branch, today, 1000)));
+        OrderNumberCounter counter = lockedCounter(branch, today);
         counter.setLastNumber(counter.getLastNumber() + 1);
         counters.save(counter);
         return "ORD-" + counter.getLastNumber();
+    }
+
+    /**
+     * Today's counter row, read under a pessimistic write lock so concurrent
+     * orders serialize on numbering. If two first-orders-of-the-day race to
+     * create the row, the loser re-reads the winner's row instead of 500ing.
+     */
+    private OrderNumberCounter lockedCounter(Branch branch, LocalDate today) {
+        Optional<OrderNumberCounter> existing = counters.findByBranchIdAndDay(branch.getId(), today);
+        if (existing.isPresent()) {
+            return existing.get();
+        }
+        try {
+            return counters.saveAndFlush(new OrderNumberCounter(branch, today, 1000));
+        } catch (DataIntegrityViolationException race) {
+            return counters.findByBranchIdAndDay(branch.getId(), today)
+                    .orElseThrow(() -> race);
+        }
     }
 
     private void checkTransition(OrderStatus from, OrderStatus to) {
@@ -412,6 +438,15 @@ public class OrderService {
         return false;
     }
 
+    private User currentUser() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid or expired token");
+        }
+        return users.findById(UUID.fromString(auth.getName()))
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid or expired token"));
+    }
+
     private BigDecimal pct(BigDecimal base, BigDecimal percent) {
         if (percent == null || percent.signum() == 0) return BigDecimal.ZERO;
         return base.multiply(percent).divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP);
@@ -439,12 +474,14 @@ public class OrderService {
     private SessionResponse toSession(TableSession s) {
         return new SessionResponse(s.getId(), s.getSessionToken(), s.getTable().getId(),
                 s.getTable().getTableNumber(), s.getTable().getBranch().getId(),
-                s.getTable().getBranch().getRestaurant().getSlug(), s.getStatus(), s.getStartedAt());
+                s.getTable().getBranch().getRestaurant().getSlug(), s.getStatus(), s.getStartedAt(),
+                s.getClosedBy() != null ? s.getClosedBy().getFullName() : null);
     }
 
     private OrderResponse toOrder(Order o, List<OrderLine> lines) {
         return new OrderResponse(o.getId(), o.getOrderNumber(), o.getStatus().name(),
                 o.getTable().getTableNumber(), o.getBranch().getId(), o.getSubtotal(),
-                o.getTaxAmount(), o.getTotalAmount(), o.getSpecialInstructions(), o.getPlacedAt(), lines);
+                o.getTaxAmount(), o.getTotalAmount(), o.getSpecialInstructions(), o.getPlacedAt(), lines,
+                o.getServedBy() != null ? o.getServedBy().getFullName() : null);
     }
 }

@@ -15,4 +15,6 @@ public class TableResponse {
     private String status;
     private String qrCodeUrl;
     private boolean active;
+    private UUID assignedWaiterId;
+    private String assignedWaiterName;
 }

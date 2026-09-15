@@ -3,6 +3,9 @@ package com.tablepulse.auth;
 import com.tablepulse.auth.dto.CreateStaffRequest;
 import com.tablepulse.auth.dto.UpdateStaffRequest;
 import com.tablepulse.auth.dto.UserResponse;
+import com.tablepulse.common.security.TenantGuard;
+import com.tablepulse.table.RestaurantTable;
+import com.tablepulse.table.RestaurantTableRepository;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -27,11 +30,17 @@ public class StaffService {
 
     private final TenantRepository tenants;
     private final UserRepository users;
+    private final RestaurantTableRepository tables;
+    private final TenantGuard guard;
     private final PasswordEncoder passwords;
 
-    public StaffService(TenantRepository tenants, UserRepository users, PasswordEncoder passwords) {
+    public StaffService(TenantRepository tenants, UserRepository users,
+                        RestaurantTableRepository tables, TenantGuard guard,
+                        PasswordEncoder passwords) {
         this.tenants = tenants;
         this.users = users;
+        this.tables = tables;
+        this.guard = guard;
         this.passwords = passwords;
     }
 
@@ -56,6 +65,9 @@ public class StaffService {
                 .role(req.getRole())
                 .active(true)
                 .build());
+        if (req.getTableIds() != null) {
+            assignTables(user, req.getTableIds());
+        }
         return toResponse(user);
     }
 
@@ -77,14 +89,49 @@ public class StaffService {
         if (!staff.getTenant().getId().equals(caller.getTenant().getId())) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Staff not found");
         }
-        if (staff.getId().equals(caller.getId())) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "You cannot deactivate yourself");
+        if (req.getActive() == null && req.getTableIds() == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Nothing to update");
         }
-        if (staff.getRole() == Role.OWNER || staff.getRole() == Role.PLATFORM_ADMIN) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Owner accounts cannot be deactivated here");
+        if (req.getActive() != null) {
+            if (staff.getId().equals(caller.getId())) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "You cannot deactivate yourself");
+            }
+            if (staff.getRole() == Role.OWNER || staff.getRole() == Role.PLATFORM_ADMIN) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Owner accounts cannot be deactivated here");
+            }
+            staff.setActive(req.getActive());
         }
-        staff.setActive(req.getActive());
+        if (req.getTableIds() != null) {
+            assignTables(staff, req.getTableIds());
+        }
         return toResponse(users.save(staff));
+    }
+
+    /**
+     * Replaces a waiter's table ownership. Tables must belong to the staff
+     * member's tenant; tables owned by other waiters move over (rebalance).
+     */
+    private void assignTables(User staff, List<UUID> tableIds) {
+        if (staff.getRole() != Role.WAITER) {
+            if (!tableIds.isEmpty()) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Only waiters can own tables");
+            }
+            return;
+        }
+        UUID tenantId = staff.getTenant().getId();
+        // Clear current ownership first so deselected tables return to house.
+        for (RestaurantTable t : tables.findByAssignedWaiterId(staff.getId())) {
+            t.setAssignedWaiter(null);
+            tables.save(t);
+        }
+        for (UUID tableId : tableIds) {
+            RestaurantTable t = guard.table(tableId);
+            if (!t.getBranch().getRestaurant().getTenant().getId().equals(tenantId)) {
+                throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Table not found");
+            }
+            t.setAssignedWaiter(staff);
+            tables.save(t);
+        }
     }
 
     private User requireActiveUser(UUID userId) {

@@ -1,7 +1,10 @@
 package com.tablepulse.table;
 
 import com.tablepulse.common.dto.ApiResponse;
+import com.tablepulse.table.dto.AssignWaiterRequest;
 import com.tablepulse.table.dto.BulkCreateTablesRequest;
+import com.tablepulse.table.dto.BulkDeleteTablesRequest;
+import com.tablepulse.table.dto.BulkDeleteTablesResponse;
 import com.tablepulse.table.dto.CreateTableRequest;
 import com.tablepulse.table.dto.TableResponse;
 import com.tablepulse.table.dto.UpdateTableRequest;
@@ -56,6 +59,19 @@ public class TableController {
     public ApiResponse<TableResponse> update(@PathVariable UUID id,
                                              @Valid @RequestBody UpdateTableRequest req) {
         return ApiResponse.ok("Table updated", service.updateTable(id, req));
+    }
+
+    @PutMapping("/tables/{id}/assignment")
+    public ApiResponse<TableResponse> assign(@PathVariable UUID id,
+                                             @Valid @RequestBody AssignWaiterRequest req) {
+        return ApiResponse.ok("Waiter assigned", service.assignWaiter(id, req));
+    }
+
+    @PostMapping("/branches/{id}/tables/bulk-delete")
+    public ApiResponse<BulkDeleteTablesResponse> bulkDelete(@PathVariable UUID id,
+                                                            @Valid @RequestBody BulkDeleteTablesRequest req) {
+        BulkDeleteTablesResponse res = service.bulkDelete(id, req);
+        return ApiResponse.ok("Deleted " + res.getDeleted().size() + " table(s)", res);
     }
 
     @DeleteMapping("/tables/{id}")

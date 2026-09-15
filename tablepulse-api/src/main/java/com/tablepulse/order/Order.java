@@ -1,6 +1,7 @@
 package com.tablepulse.order;
 
 import com.tablepulse.auth.Tenant;
+import com.tablepulse.auth.User;
 import com.tablepulse.restaurant.Branch;
 import com.tablepulse.restaurant.Restaurant;
 import com.tablepulse.table.RestaurantTable;
@@ -15,6 +16,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
+import jakarta.persistence.UniqueConstraint;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -25,7 +27,9 @@ import java.time.Instant;
 import java.util.UUID;
 
 @Entity
-@Table(name = "orders")
+@Table(name = "orders",
+        uniqueConstraints = @UniqueConstraint(name = "uq_orders_branch_number",
+                columnNames = {"branch_id", "order_number"}))
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
@@ -36,7 +40,7 @@ public class Order {
     @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
 
-    @Column(name = "order_number", nullable = false, unique = true, length = 20)
+    @Column(name = "order_number", nullable = false, length = 20)
     private String orderNumber;
 
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
@@ -103,4 +107,9 @@ public class Order {
 
     @Column(name = "cancellation_reason", columnDefinition = "TEXT")
     private String cancellationReason;
+
+    /** Staff member who marked this order SERVED — null if not served yet. */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "served_by")
+    private User servedBy;
 }

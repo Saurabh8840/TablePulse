@@ -1,5 +1,6 @@
 package com.tablepulse.order;
 
+import com.tablepulse.auth.User;
 import com.tablepulse.table.RestaurantTable;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -47,4 +48,9 @@ public class TableSession {
 
     @Column(name = "closed_at")
     private Instant closedAt;
+
+    /** Staff member who closed the table — null if still open. */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "closed_by")
+    private User closedBy;
 }

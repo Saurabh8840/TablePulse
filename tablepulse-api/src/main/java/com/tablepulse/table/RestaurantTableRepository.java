@@ -11,5 +11,9 @@ public interface RestaurantTableRepository extends JpaRepository<RestaurantTable
 
     boolean existsByBranchIdAndTableNumber(UUID branchId, String tableNumber);
 
+    boolean existsByBranchIdAndTableNumberAndActiveTrue(UUID branchId, String tableNumber);
+
     Optional<RestaurantTable> findByBranchIdAndTableNumber(UUID branchId, String tableNumber);
+
+    List<RestaurantTable> findByAssignedWaiterId(UUID waiterId);
 }

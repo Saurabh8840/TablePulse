@@ -1,5 +1,8 @@
 package com.tablepulse.menu;
 
+import com.tablepulse.auth.User;
+import com.tablepulse.auth.UserRepository;
+import com.tablepulse.common.security.RoleGuard;
 import com.tablepulse.common.security.TenantGuard;
 import com.tablepulse.menu.dto.AvailabilityRequest;
 import com.tablepulse.menu.dto.CreateCategoryRequest;
@@ -48,19 +51,24 @@ public class MenuService {
     private final ModifierGroupRepository groups;
     private final ModifierOptionRepository options;
     private final RestaurantRepository restaurants;
+    private final UserRepository users;
     private final TenantGuard guard;
+    private final RoleGuard roles;
     private final Path uploadDir;
 
     public MenuService(MenuCategoryRepository categories, MenuItemRepository items,
                        ModifierGroupRepository groups, ModifierOptionRepository options,
-                       RestaurantRepository restaurants, TenantGuard guard,
+                       RestaurantRepository restaurants, UserRepository users,
+                       TenantGuard guard, RoleGuard roles,
                        @Value("${app.upload-dir:uploads}") String uploadDir) {
         this.categories = categories;
         this.items = items;
         this.groups = groups;
         this.options = options;
         this.restaurants = restaurants;
+        this.users = users;
         this.guard = guard;
+        this.roles = roles;
         this.uploadDir = Paths.get(uploadDir).toAbsolutePath().normalize();
     }
 
@@ -68,6 +76,7 @@ public class MenuService {
 
     @Transactional
     public CategoryResponse createCategory(UUID restaurantId, CreateCategoryRequest req) {
+        roles.requireOwnerOrManager();
         Restaurant r = guard.restaurant(restaurantId);
         MenuCategory c = categories.save(MenuCategory.builder()
                 .restaurant(r)
@@ -88,6 +97,7 @@ public class MenuService {
 
     @Transactional
     public CategoryResponse updateCategory(UUID categoryId, UpdateCategoryRequest req) {
+        roles.requireOwnerOrManager();
         MenuCategory c = guard.category(categoryId);
         if (req.getName() != null && !req.getName().isBlank()) c.setName(req.getName().trim());
         if (req.getDescription() != null) c.setDescription(req.getDescription());
@@ -98,6 +108,7 @@ public class MenuService {
 
     @Transactional
     public void deleteCategory(UUID categoryId) {
+        roles.requireOwnerOrManager();
         MenuCategory c = guard.category(categoryId);
         c.setActive(false);
         categories.save(c);
@@ -107,6 +118,7 @@ public class MenuService {
 
     @Transactional
     public ItemResponse createItem(UUID categoryId, CreateItemRequest req) {
+        roles.requireOwnerOrManager();
         MenuCategory c = guard.category(categoryId);
         MenuItem i = items.save(MenuItem.builder()
                 .category(c)
@@ -131,6 +143,7 @@ public class MenuService {
 
     @Transactional
     public ItemResponse updateItem(UUID itemId, UpdateItemRequest req) {
+        roles.requireOwnerOrManager();
         MenuItem i = guard.item(itemId);
         if (req.getName() != null && !req.getName().isBlank()) i.setName(req.getName().trim());
         if (req.getDescription() != null) i.setDescription(req.getDescription());
@@ -143,15 +156,24 @@ public class MenuService {
         return toItem(items.save(i));
     }
 
+    /**
+     * Availability toggle (86-ing). Open to all staff — kitchen owns this during
+     * service — and records who flipped it so the owner sees attribution.
+     */
     @Transactional
-    public ItemResponse setAvailability(UUID itemId, AvailabilityRequest req) {
+    public ItemResponse setAvailability(UUID callerId, UUID itemId, AvailabilityRequest req) {
+        roles.requireAnyStaff();
         MenuItem i = guard.item(itemId);
+        User caller = users.findById(callerId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid or expired token"));
         i.setAvailable(req.getAvailable());
+        i.setUpdatedBy(caller);
         return toItem(items.save(i));
     }
 
     @Transactional
     public void deleteItem(UUID itemId) {
+        roles.requireOwnerOrManager();
         MenuItem i = guard.item(itemId);
         i.setActive(false);
         items.save(i);
@@ -159,6 +181,7 @@ public class MenuService {
 
     @Transactional
     public ItemResponse uploadImage(UUID itemId, MultipartFile file) {
+        roles.requireOwnerOrManager();
         MenuItem i = guard.item(itemId);
         if (file == null || file.isEmpty()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Image file is required");
@@ -183,6 +206,7 @@ public class MenuService {
 
     @Transactional
     public ItemResponse deleteImage(UUID itemId) {
+        roles.requireOwnerOrManager();
         MenuItem i = guard.item(itemId);
         if (i.getImageUrl() != null) {
             try {
@@ -203,6 +227,7 @@ public class MenuService {
 
     @Transactional
     public ModifierGroupResponse createModifierGroup(UUID itemId, CreateModifierGroupRequest req) {
+        roles.requireOwnerOrManager();
         MenuItem i = guard.item(itemId);
         if (req.getMaxSelections() < Math.max(req.getMinSelections(), req.isRequired() ? 1 : 0)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "maxSelections must cover minSelections");
@@ -220,6 +245,7 @@ public class MenuService {
 
     @Transactional
     public ModifierOptionResponse createModifierOption(UUID groupId, CreateModifierOptionRequest req) {
+        roles.requireOwnerOrManager();
         ModifierGroup g = guard.modifierGroup(groupId);
         ModifierOption o = options.save(ModifierOption.builder()
                 .group(g)
@@ -290,7 +316,9 @@ public class MenuService {
     private ItemResponse toItem(MenuItem i) {
         return new ItemResponse(i.getId(), i.getCategory().getId(), i.getName(), i.getDescription(),
                 i.getPrice(), i.getImageUrl(), i.isVegetarian(), i.isAvailable(),
-                i.getPreparationTimeMinutes(), i.getDisplayOrder(), i.isActive());
+                i.getPreparationTimeMinutes(), i.getDisplayOrder(), i.isActive(),
+                i.getUpdatedBy() != null ? i.getUpdatedBy().getFullName() : null,
+                i.getUpdatedAt());
     }
 
     private ModifierGroupResponse toGroup(ModifierGroup g, List<ModifierOptionResponse> opts) {

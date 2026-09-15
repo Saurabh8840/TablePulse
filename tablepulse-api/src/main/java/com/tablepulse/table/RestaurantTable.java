@@ -1,5 +1,6 @@
 package com.tablepulse.table;
 
+import com.tablepulse.auth.User;
 import com.tablepulse.restaurant.Branch;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -10,7 +11,6 @@ import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
-import jakarta.persistence.UniqueConstraint;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -20,8 +20,10 @@ import java.time.Instant;
 import java.util.UUID;
 
 @Entity
-@Table(name = "restaurant_tables",
-        uniqueConstraints = @UniqueConstraint(columnNames = {"branch_id", "table_number"}))
+// Uniqueness is enforced in Postgres by partial index uq_tables_branch_number_active
+// (branch_id, table_number) WHERE is_active (V8) so deleted numbers can be reused.
+// No JPA uniqueConstraints here — JPA cannot express partial indexes.
+@Table(name = "restaurant_tables")
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
@@ -49,6 +51,11 @@ public class RestaurantTable {
 
     @Column(name = "qr_code_url", length = 500)
     private String qrCodeUrl;
+
+    /** Owning waiter (assigned by owner/manager). Null = house table, any waiter. */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "assigned_waiter_id")
+    private User assignedWaiter;
 
     @Column(name = "is_active", nullable = false)
     @Builder.Default

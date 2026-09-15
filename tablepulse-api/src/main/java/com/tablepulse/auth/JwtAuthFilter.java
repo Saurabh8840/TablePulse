@@ -68,15 +68,16 @@ public class JwtAuthFilter extends OncePerRequestFilter {
             unauthorized(response, "Invalid token claims");
             return;
         }
-        String role = claims.get("role", String.class);
         var user = users.findById(userId).orElse(null);
         if (user == null || !user.isActive()
                 || !user.getTenant().getId().equals(tenantId)) {
             unauthorized(response, "Invalid or expired token");
             return;
         }
+        // Authority comes from the DB row, not the token claim, so role changes
+        // and deactivations take effect without waiting for re-login.
         var auth = new UsernamePasswordAuthenticationToken(
-                userId.toString(), null, List.of(new SimpleGrantedAuthority("ROLE_" + role)));
+                userId.toString(), null, List.of(new SimpleGrantedAuthority("ROLE_" + user.getRole().name())));
         SecurityContextHolder.getContext().setAuthentication(auth);
         TenantContext.set(tenantId);
         try {

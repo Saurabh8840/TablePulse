@@ -4,6 +4,7 @@ import lombok.AllArgsConstructor;
 import lombok.Data;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
@@ -34,6 +35,8 @@ public class MenuDtos {
         private Integer preparationTimeMinutes;
         private int displayOrder;
         private boolean active;
+        private String lastChangedBy;
+        private Instant updatedAt;
     }
 
     @Data

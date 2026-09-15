@@ -15,6 +15,7 @@ import com.tablepulse.menu.dto.UpdateItemRequest;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -84,9 +85,11 @@ public class MenuController {
     }
 
     @PatchMapping("/items/{id}/availability")
-    public ApiResponse<ItemResponse> setAvailability(@PathVariable UUID id,
+    public ApiResponse<ItemResponse> setAvailability(Authentication auth,
+                                                     @PathVariable UUID id,
                                                      @Valid @RequestBody AvailabilityRequest req) {
-        return ApiResponse.ok("Availability updated", service.setAvailability(id, req));
+        return ApiResponse.ok("Availability updated",
+                service.setAvailability(UUID.fromString(auth.getName()), id, req));
     }
 
     @PostMapping(value = "/items/{id}/image", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)

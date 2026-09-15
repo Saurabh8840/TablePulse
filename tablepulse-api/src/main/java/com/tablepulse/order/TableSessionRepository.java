@@ -10,4 +10,6 @@ public interface TableSessionRepository extends JpaRepository<TableSession, UUID
     Optional<TableSession> findBySessionToken(String sessionToken);
 
     List<TableSession> findByTableIdAndStatus(UUID tableId, String status);
+
+    List<TableSession> findByTable_Branch_IdAndStatus(UUID branchId, String status);
 }

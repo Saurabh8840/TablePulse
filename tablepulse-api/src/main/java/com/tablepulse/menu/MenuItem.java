@@ -1,5 +1,6 @@
 package com.tablepulse.menu;
 
+import com.tablepulse.auth.User;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.FetchType;
@@ -73,6 +74,11 @@ public class MenuItem {
     @Column(name = "updated_at", nullable = false)
     @Builder.Default
     private Instant updatedAt = Instant.now();
+
+    /** Staff member who last changed this item (e.g. 86'd it) — null if never changed. */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "updated_by")
+    private User updatedBy;
 
     @PreUpdate
     void onUpdate() {

@@ -21,6 +21,7 @@ public class OrderViews {
         private String restaurantSlug;
         private String status;
         private Instant startedAt;
+        private String closedBy;
     }
 
     @Data
@@ -57,6 +58,7 @@ public class OrderViews {
         private String specialInstructions;
         private Instant placedAt;
         private List<OrderLine> items;
+        private String servedBy;
     }
 
     @Data

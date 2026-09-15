@@ -2,6 +2,7 @@ package com.tablepulse.restaurant;
 
 import com.tablepulse.auth.Tenant;
 import com.tablepulse.auth.TenantRepository;
+import com.tablepulse.common.security.RoleGuard;
 import com.tablepulse.common.security.TenantGuard;
 import com.tablepulse.restaurant.dto.BranchResponse;
 import com.tablepulse.restaurant.dto.CreateBranchRequest;
@@ -29,17 +30,20 @@ public class RestaurantService {
     private final BranchRepository branches;
     private final TenantRepository tenants;
     private final TenantGuard guard;
+    private final RoleGuard roles;
 
     public RestaurantService(RestaurantRepository restaurants, BranchRepository branches,
-                             TenantRepository tenants, TenantGuard guard) {
+                             TenantRepository tenants, TenantGuard guard, RoleGuard roles) {
         this.restaurants = restaurants;
         this.branches = branches;
         this.tenants = tenants;
         this.guard = guard;
+        this.roles = roles;
     }
 
     @Transactional
     public RestaurantResponse createRestaurant(CreateRestaurantRequest req) {
+        roles.requireOwnerOrManager();
         UUID tenantId = TenantGuard.tenantId();
         Tenant tenant = tenants.findById(tenantId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid tenant"));
@@ -70,6 +74,7 @@ public class RestaurantService {
 
     @Transactional
     public RestaurantResponse updateRestaurant(UUID id, UpdateRestaurantRequest req) {
+        roles.requireOwnerOrManager();
         Restaurant r = guard.restaurant(id);
         if (req.getName() != null && !req.getName().isBlank()) r.setName(req.getName().trim());
         if (req.getDescription() != null) r.setDescription(req.getDescription());
@@ -83,6 +88,7 @@ public class RestaurantService {
 
     @Transactional
     public BranchResponse createBranch(UUID restaurantId, CreateBranchRequest req) {
+        roles.requireOwnerOrManager();
         Restaurant r = guard.restaurant(restaurantId);
         Branch b = branches.save(Branch.builder()
                 .restaurant(r)
@@ -105,6 +111,7 @@ public class RestaurantService {
 
     @Transactional
     public BranchResponse updateBranch(UUID branchId, UpdateBranchRequest req) {
+        roles.requireOwnerOrManager();
         Branch b = guard.branch(branchId);
         if (req.getName() != null && !req.getName().isBlank()) b.setName(req.getName().trim());
         if (req.getAddress() != null) b.setAddress(req.getAddress());
