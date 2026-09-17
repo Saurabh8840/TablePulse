@@ -13,6 +13,7 @@ import CustomerLayout from '../../components/layout/CustomerLayout.jsx';
 import EmptyState from '../../components/EmptyState.jsx';
 import { useSession } from '../../hooks/useSession.js';
 import { getBill, listSessionOrders } from '../../services/ordering.js';
+import { confirmMockPayment, payAtCounter } from '../../services/payment.js';
 
 export default function SessionBill() {
   const { slug, table } = useParams();
@@ -25,6 +26,10 @@ export default function SessionBill() {
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [paying, setPaying] = useState(null);
+  const [payError, setPayError] = useState(null);
+  const [receipt, setReceipt] = useState(null);
+  const [counterPending, setCounterPending] = useState(null);
 
   const withBranch = (path) => (branchId ? `${path}?b=${encodeURIComponent(branchId)}` : path);
   const base = `/r/${slug}/t/${table}`;
@@ -118,23 +123,97 @@ export default function SessionBill() {
         </Box>
       </Paper>
 
-      <Paper variant="outlined" sx={{ p: 2, borderRadius: 3, mb: 2, bgcolor: 'action.hover' }}>
-        <Typography variant="subtitle2" fontWeight={800} gutterBottom>
-          Payment — coming in Phase 6
-        </Typography>
-        <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
-          Razorpay UPI / Card + pay-at-counter land next. For this pilot, please pay at the counter
-          showing this bill.
-        </Typography>
-        <Box sx={{ display: 'flex', gap: 1 }}>
-          <Button variant="contained" disabled fullWidth>
-            Pay Now (Phase 6)
-          </Button>
-          <Button variant="outlined" disabled fullWidth>
-            Pay at Counter (Phase 6)
-          </Button>
-        </Box>
-      </Paper>
+      {receipt ? (
+        <Paper variant="outlined" sx={{ p: 2, borderRadius: 3, mb: 2, bgcolor: 'success.light' }}>
+          <Typography variant="subtitle2" fontWeight={800} gutterBottom>
+            Payment successful — Table closed
+          </Typography>
+          <Typography variant="body2" sx={{ mb: 1 }}>
+            {(bill?.orders ?? []).map((l) => l.orderNumber).join(' · ')} — ₹
+            {Number(receipt.total ?? bill?.totalAmount ?? 0).toFixed(2)} paid via{' '}
+            {receipt.method === 'MOCK_CARD' ? 'Mock Card' : 'Mock UPI'}.
+          </Typography>
+          <Typography variant="caption" color="text.secondary">
+            Show this screen to your waiter. Receipt {String(receipt.id).slice(0, 8)}.
+          </Typography>
+        </Paper>
+      ) : (
+        <Paper variant="outlined" sx={{ p: 2, borderRadius: 3, mb: 2, bgcolor: 'action.hover' }}>
+          <Typography variant="subtitle2" fontWeight={800} gutterBottom>
+            Payment
+          </Typography>
+          {counterPending ? (
+            <Alert severity="info" sx={{ mb: 1.5 }}>
+              Pay at counter noted — please pay ₹
+              {Number(counterPending.total ?? bill?.totalAmount ?? 0).toFixed(2)} at the counter
+              showing this bill. Your waiter will close the table.
+            </Alert>
+          ) : (
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+              Mock checkout for this pilot — no real money moves. Kitchen must serve all orders first.
+            </Typography>
+          )}
+          {payError && (
+            <Alert
+              severity={/open order/i.test(payError) ? 'warning' : 'error'}
+              sx={{ mb: 1.5 }}
+              onClose={() => setPayError(null)}
+              action={
+                /open order/i.test(payError) ? (
+                  <Button color="inherit" size="small" onClick={load}>
+                    Refresh
+                  </Button>
+                ) : undefined
+              }
+            >
+              {/open order/i.test(payError)
+                ? `Kitchen still has open orders — ask for your food first. (${payError})`
+                : payError}
+            </Alert>
+          )}
+          <Box sx={{ display: 'flex', gap: 1 }}>
+            <Button
+              variant="contained"
+              fullWidth
+              disabled={paying !== null || counterPending !== null}
+              onClick={async () => {
+                setPaying('mock');
+                setPayError(null);
+                try {
+                  const res = await confirmMockPayment(token, 'MOCK_UPI');
+                  setReceipt(res.data);
+                } catch (e) {
+                  setPayError(e.message);
+                } finally {
+                  setPaying(null);
+                }
+              }}
+            >
+              {paying === 'mock' ? 'Paying…' : 'Pay Now (Mock UPI)'}
+            </Button>
+            <Button
+              variant="outlined"
+              fullWidth
+              disabled={paying !== null || counterPending !== null}
+              onClick={async () => {
+                setPaying('counter');
+                setPayError(null);
+                try {
+                  const res = await payAtCounter(token);
+                  if (res.data?.status === 'COMPLETED') setReceipt(res.data);
+                  else setCounterPending(res.data);
+                } catch (e) {
+                  setPayError(e.message);
+                } finally {
+                  setPaying(null);
+                }
+              }}
+            >
+              {paying === 'counter' ? 'Noting…' : 'Pay at Counter'}
+            </Button>
+          </Box>
+        </Paper>
+      )}
 
       <Box sx={{ display: 'flex', gap: 1, position: 'sticky', bottom: 12 }}>
         <Button variant="outlined" fullWidth onClick={() => navigate(withBranch(base))} sx={{ bgcolor: 'background.paper' }}>

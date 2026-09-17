@@ -109,15 +109,15 @@ export default function AppShell({ children }) {
             <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', mb: 0.5 }}>
               <RocketLaunchIcon fontSize="small" />
               <Typography variant="subtitle2" fontWeight={800}>
-                Phase 6 is next
+                Mock payments live
               </Typography>
             </Box>
             <Typography variant="caption" sx={{ opacity: 0.9, display: 'block', mb: 1.5 }}>
-              Payments & billing — Razorpay/UPI + pay at counter.
+              Mock UPI + pay at counter is on — open a table bill to try it.
             </Typography>
-            <Button size="small" variant="contained" disabled
-              sx={{ bgcolor: 'rgba(255,255,255,.2)', color: '#fff', '&.Mui-disabled': { color: 'rgba(255,255,255,.6)' } }}>
-              Coming soon
+            <Button size="small" variant="contained" component={RouterLink} to="/waiter"
+              sx={{ bgcolor: 'rgba(255,255,255,.2)', color: '#fff' }}>
+              Open waiter board
             </Button>
           </Box>
         )}
