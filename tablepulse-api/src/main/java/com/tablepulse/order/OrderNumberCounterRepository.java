@@ -13,4 +13,6 @@ public interface OrderNumberCounterRepository
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     Optional<OrderNumberCounter> findByBranchIdAndDay(UUID branchId, LocalDate day);
+
+    Optional<OrderNumberCounter> findFirstByBranchIdAndDayLessThanOrderByDayDesc(UUID branchId, LocalDate day);
 }

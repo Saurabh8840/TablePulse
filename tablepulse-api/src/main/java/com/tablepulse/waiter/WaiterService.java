@@ -131,8 +131,18 @@ public class WaiterService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                     "Table has " + blocking + " open order" + (blocking == 1 ? "" : "s") + " — serve or cancel them first");
         }
+        Instant now = Instant.now();
+        // Settle any served-but-uncompleted orders (e.g. never tapped
+        // Complete per row) — same semantics as the payment close.
+        for (Order o : orders.findBySessionIdOrderByPlacedAtAsc(sessionId)) {
+            if (o.getStatus() == OrderStatus.SERVED) {
+                o.setStatus(OrderStatus.COMPLETED);
+                o.setCompletedAt(now);
+                orders.save(o);
+            }
+        }
         s.setStatus("CLOSED");
-        s.setClosedAt(Instant.now());
+        s.setClosedAt(now);
         s.setClosedBy(currentUser());
         TableSession saved = sessions.save(s);
         return new SessionResponse(saved.getId(), saved.getSessionToken(), saved.getTable().getId(),

@@ -281,8 +281,8 @@ public class OrderService {
         } catch (IllegalArgumentException ex) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Unknown status: " + to);
         }
-        if (target == OrderStatus.COMPLETED) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Orders complete automatically on payment");
+        if (target == OrderStatus.COMPLETED && order.getStatus() != OrderStatus.SERVED) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Only served orders can be completed");
         }
         if (target == OrderStatus.PLACED) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Status cannot move backwards");
@@ -299,6 +299,7 @@ public class OrderService {
                 order.setServedAt(now);
                 order.setServedBy(currentUser());
             }
+            case COMPLETED -> order.setCompletedAt(now);
             case REJECTED, CANCELLED -> {
                 order.setCancelledAt(now);
                 order.setCancellationReason(reason);
@@ -386,17 +387,51 @@ public class OrderService {
      * Today's counter row, read under a pessimistic write lock so concurrent
      * orders serialize on numbering. If two first-orders-of-the-day race to
      * create the row, the loser re-reads the winner's row instead of 500ing.
+     * Numbers are continuous per branch (never restart daily) so they stay
+     * unique under uq_orders_branch_number.
      */
     private OrderNumberCounter lockedCounter(Branch branch, LocalDate today) {
         Optional<OrderNumberCounter> existing = counters.findByBranchIdAndDay(branch.getId(), today);
         if (existing.isPresent()) {
             return existing.get();
         }
+        int start = startingNumber(branch, today);
         try {
-            return counters.saveAndFlush(new OrderNumberCounter(branch, today, 1000));
+            return counters.saveAndFlush(new OrderNumberCounter(branch, today, start));
         } catch (DataIntegrityViolationException race) {
             return counters.findByBranchIdAndDay(branch.getId(), today)
                     .orElseThrow(() -> race);
+        }
+    }
+
+    /**
+     * Carry over the previous day's counter; if this branch never had a
+     * counter row (e.g. only pre-counter orders exist), resume past its
+     * highest historical ORD-&lt;n&gt; instead of restarting at 1000.
+     */
+    private int startingNumber(Branch branch, LocalDate today) {
+        Optional<OrderNumberCounter> prev =
+                counters.findFirstByBranchIdAndDayLessThanOrderByDayDesc(branch.getId(), today);
+        if (prev.isPresent()) {
+            return prev.get().getLastNumber();
+        }
+        UUID tenantId = branch.getRestaurant().getTenant().getId();
+        int max = 1000;
+        for (Order o : orders.search(tenantId, branch.getId(), null, null, null)) {
+            max = Math.max(max, parseOrderNumber(o.getOrderNumber()));
+        }
+        return max;
+    }
+
+    private int parseOrderNumber(String orderNumber) {
+        if (orderNumber == null) return 0;
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("^ORD-(\\d+)")
+                .matcher(orderNumber.trim());
+        if (!m.find()) return 0;
+        try {
+            return Integer.parseInt(m.group(1));
+        } catch (NumberFormatException ex) {
+            return 0;
         }
     }
 
@@ -406,6 +441,7 @@ public class OrderService {
             case ACCEPTED -> to == OrderStatus.PREPARING || to == OrderStatus.CANCELLED;
             case PREPARING -> to == OrderStatus.READY;
             case READY -> to == OrderStatus.SERVED;
+            case SERVED -> to == OrderStatus.COMPLETED;
             default -> false;
         };
         if (!ok) {
@@ -421,7 +457,7 @@ public class OrderService {
         boolean owner = hasAny(auth, "ROLE_MANAGER", "ROLE_OWNER");
         boolean allowed = switch (to) {
             case ACCEPTED, PREPARING, READY, REJECTED -> kitchen;
-            case SERVED -> floor;
+            case SERVED, COMPLETED -> floor;
             case CANCELLED -> from == OrderStatus.PLACED ? floor : owner;
             default -> false;
         };

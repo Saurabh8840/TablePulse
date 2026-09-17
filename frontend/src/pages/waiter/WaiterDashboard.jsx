@@ -25,6 +25,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import PageHeader from '../../components/layout/PageHeader.jsx';
 import { useAuth } from '../../hooks/useAuth.js';
 import { searchOrders, updateOrderStatus } from '../../services/kitchen.js';
+import { completeCashPayment, listPayments } from '../../services/payment.js';
 import { listBranches, listRestaurants } from '../../services/restaurant.js';
 import { closeSession, getTableStatus } from '../../services/waiter.js';
 
@@ -82,6 +83,7 @@ export default function WaiterDashboard() {
   const [branchId, setBranchId] = useState(() => localStorage.getItem(BRANCH_KEY) ?? '');
   const [tables, setTables] = useState([]);
   const [orders, setOrders] = useState([]);
+  const [payments, setPayments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [actingId, setActingId] = useState(null);
@@ -137,8 +139,13 @@ export default function WaiterDashboard() {
       return;
     }
     try {
-      const [st, od] = await Promise.all([getTableStatus(branchId), searchOrders({ branchId })]);
+      const [st, od, pm] = await Promise.all([
+        getTableStatus(branchId),
+        searchOrders({ branchId }),
+        listPayments({ branchId }),
+      ]);
       setTables(st.data ?? []);
+      setPayments(pm.data ?? []);
       const list = od.data ?? [];
       if (sound && knownReady.current.size > 0) {
         const fresh = list.filter((o) => o.status === 'READY' && !knownReady.current.has(o.id));
@@ -175,6 +182,39 @@ export default function WaiterDashboard() {
     setActingId(order.id);
     try {
       await updateOrderStatus(order.id, 'SERVED');
+      await load();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setActingId(null);
+    }
+  }
+
+  async function handleComplete(order) {
+    const t = tables.find((x) => x.tableNumber === order.tableNumber);
+    if (isCover(t) && !window.confirm(
+      `Table ${order.tableNumber} is ${t.assignedWaiterName}'s — complete anyway? It'll be recorded as your cover.`)) {
+      return;
+    }
+    setActingId(order.id);
+    try {
+      await updateOrderStatus(order.id, 'COMPLETED');
+      await load();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setActingId(null);
+    }
+  }
+
+  async function handleCollect(payment, table) {
+    if (isCover(table) && !window.confirm(
+      `Table ${table.tableNumber} is ${table.assignedWaiterName}'s — collect anyway? It'll be recorded as your cover.`)) {
+      return;
+    }
+    setActingId(payment.id);
+    try {
+      await completeCashPayment(payment.id);
       await load();
     } catch (e) {
       setError(e.message);
@@ -247,6 +287,20 @@ export default function WaiterDashboard() {
     () => selectedOrders.filter((o) => o.status !== 'SERVED'),
     [selectedOrders],
   );
+
+  /** Drawer table re-derived from live poll data so its status never goes stale. */
+  const drawerTable = useMemo(() => {
+    if (!selected) return null;
+    return tables.find((t) => t.tableId === selected.tableId) ?? selected;
+  }, [tables, selected]);
+
+  /** Pending pay-at-counter request on the open table, if any. */
+  const pendingCash = useMemo(() => {
+    if (!drawerTable?.sessionId) return null;
+    return (
+      payments.find((p) => p.sessionId === drawerTable.sessionId && p.status === 'PENDING') ?? null
+    );
+  }, [payments, drawerTable]);
 
   const needsAttention = tables.filter((t) => t.displayStatus === 'READY').length;
 
@@ -438,26 +492,26 @@ export default function WaiterDashboard() {
 
       <Drawer anchor="right" open={!!selected} onClose={() => setSelected(null)}>
         <Box sx={{ width: { xs: 320, sm: 380 }, p: 2.5 }}>
-          {selected && (
+          {drawerTable && (
             <>
               <Typography variant="h6" fontWeight={800}>
-                Table {selected.tableNumber}
+                Table {drawerTable.tableNumber}
               </Typography>
               <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                {STATUS_META[selected.displayStatus]?.label} · {selected.seatingCapacity} seats
-                {selected.oldestPlacedAt && ` · oldest ${elapsed(selected.oldestPlacedAt)}`}
+                {STATUS_META[drawerTable.displayStatus]?.label} · {drawerTable.seatingCapacity} seats
+                {drawerTable.oldestPlacedAt && ` · oldest ${elapsed(drawerTable.oldestPlacedAt)}`}
                 <br />
-                Owner: {selected.assignedWaiterName ?? '🏠 House (any waiter)'}
+                Owner: {drawerTable.assignedWaiterName ?? '🏠 House (any waiter)'}
               </Typography>
               {selectedOrders.length === 0 ? (
                 <Alert severity="info" sx={{ mb: 2 }}>
-                  {selected.sessionId
+                  {drawerTable.sessionId
                     ? 'Seated — no orders on this table yet.'
                     : 'Empty — no active session on this table.'}
                 </Alert>
               ) : liveSelected.length === 0 ? (
                 <Alert severity="success" sx={{ mb: 2 }}>
-                  All orders served — ready to close the table.
+                  All orders served — complete them per row or close the table.
                 </Alert>
               ) : null}
               {selectedOrders.length > 0 && (
@@ -478,7 +532,7 @@ export default function WaiterDashboard() {
                       {o.servedBy && (
                         <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
                           Served by {o.servedBy}
-                          {selected.assignedWaiterId && o.servedBy !== selected.assignedWaiterName && ' (cover)'} ✓
+                          {drawerTable.assignedWaiterId && o.servedBy !== drawerTable.assignedWaiterName && ' (cover)'} ✓
                         </Typography>
                       )}
                       {o.status === 'READY' && (
@@ -493,18 +547,36 @@ export default function WaiterDashboard() {
                           {actingId === o.id ? 'Updating…' : 'Mark Served ✓'}
                         </Button>
                       )}
+                      {o.status === 'SERVED' && (
+                        <Button
+                          fullWidth
+                          size="small"
+                          variant="outlined"
+                          sx={{ mt: 1 }}
+                          disabled={actingId === o.id}
+                          onClick={() => handleComplete(o)}
+                        >
+                          {actingId === o.id ? 'Updating…' : 'Complete ✓'}
+                        </Button>
+                      )}
                     </Paper>
                   ))}
                 </Box>
+              )}
+              {pendingCash && (
+                <Alert severity="info" sx={{ mb: 2 }}>
+                  ₹{Number(pendingCash.total ?? 0).toFixed(2)} cash pending — collect at the table,
+                  then mark it collected to close out.
+                </Alert>
               )}
               <Button
                 fullWidth
                 variant="outlined"
                 startIcon={<RoomServiceIcon />}
-                disabled={!selected.sessionId || closing || liveSelected.length > 0}
-                onClick={() => handleClose(selected)}
+                disabled={!drawerTable.sessionId || closing || liveSelected.length > 0}
+                onClick={() => handleClose(drawerTable)}
                 title={
-                  !selected.sessionId
+                  !drawerTable.sessionId
                     ? 'No active session'
                     : liveSelected.length > 0
                       ? 'Serve or cancel all live orders first'
@@ -517,6 +589,20 @@ export default function WaiterDashboard() {
                 <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
                   Close is enabled once all live orders are served or cancelled.
                 </Typography>
+              )}
+              {pendingCash && (
+                <Button
+                  fullWidth
+                  variant="contained"
+                  color="success"
+                  sx={{ mt: 1.5 }}
+                  disabled={actingId === pendingCash.id}
+                  onClick={() => handleCollect(pendingCash, drawerTable)}
+                >
+                  {actingId === pendingCash.id
+                    ? 'Updating…'
+                    : `Mark ₹${Number(pendingCash.total ?? 0).toFixed(2)} Cash Collected ✓`}
+                </Button>
               )}
             </>
           )}
