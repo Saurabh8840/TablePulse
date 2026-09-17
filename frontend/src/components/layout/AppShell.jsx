@@ -109,11 +109,11 @@ export default function AppShell({ children }) {
             <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', mb: 0.5 }}>
               <RocketLaunchIcon fontSize="small" />
               <Typography variant="subtitle2" fontWeight={800}>
-                Mock payments live
+                Phase 8 is next
               </Typography>
             </Box>
             <Typography variant="caption" sx={{ opacity: 0.9, display: 'block', mb: 1.5 }}>
-              Mock UPI + pay at counter is on — open a table bill to try it.
+              Deploy & pilot — Docker, cloud, QR stickers.
             </Typography>
             <Button size="small" variant="contained" component={RouterLink} to="/waiter"
               sx={{ bgcolor: 'rgba(255,255,255,.2)', color: '#fff' }}>

@@ -6,6 +6,7 @@ import AdminHome from './pages/admin/AdminHome.jsx';
 import MenuManager from './pages/admin/MenuManager.jsx';
 import RestaurantDetail from './pages/admin/RestaurantDetail.jsx';
 import Restaurants from './pages/admin/Restaurants.jsx';
+import RevenueHistory from './pages/admin/RevenueHistory.jsx';
 import Staff from './pages/admin/Staff.jsx';
 import Tables from './pages/admin/Tables.jsx';
 import Login from './pages/auth/Login.jsx';
@@ -42,6 +43,7 @@ function App() {
                   <Route path="/login" element={<Login />} />
                   <Route path="/register" element={<Register />} />
                   <Route path="/admin" element={<RequireRole allow={MANAGERS}><AdminHome /></RequireRole>} />
+                  <Route path="/admin/revenue" element={<RequireRole allow={MANAGERS}><RevenueHistory /></RequireRole>} />
                   <Route path="/admin/restaurants" element={<RequireRole allow={MANAGERS}><Restaurants /></RequireRole>} />
                   <Route path="/admin/restaurants/:id" element={<RequireRole allow={MANAGERS}><RestaurantDetail /></RequireRole>} />
                   <Route path="/admin/restaurants/:id/menu" element={<RequireRole allow={MANAGERS}><MenuManager /></RequireRole>} />
