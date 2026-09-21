@@ -101,7 +101,13 @@ export default function WaiterDashboard() {
       roleInit.current = true;
       if (user.role !== 'WAITER') setMineOnly(false);
     }
-  }, [user]);
+    // Fix 2: branch-scoped staff are locked to their home branch —
+    // a Bangalore waiter can never open the Noida floor.
+    if (user?.branchId && branchId !== user.branchId) {
+      setBranchId(user.branchId);
+      localStorage.setItem(BRANCH_KEY, user.branchId);
+    }
+  }, [user, branchId]);
 
   useEffect(() => {
     listRestaurants()
@@ -344,33 +350,41 @@ export default function WaiterDashboard() {
       )}
 
       <Paper variant="outlined" sx={{ p: 1.5, borderRadius: 3, mb: 2, display: 'flex', gap: 1.5, flexWrap: 'wrap' }}>
-        <FormControl size="small" sx={{ minWidth: 200, flexGrow: 1 }}>
-          <InputLabel>Restaurant</InputLabel>
-          <Select value={restaurantId} label="Restaurant" onChange={(e) => setRestaurantId(e.target.value)}>
-            {restaurants.map((r) => (
-              <MenuItem key={r.id} value={r.id}>
-                {r.name}
-              </MenuItem>
-            ))}
-          </Select>
-        </FormControl>
-        <FormControl size="small" sx={{ minWidth: 200, flexGrow: 1 }}>
-          <InputLabel>Branch</InputLabel>
-          <Select
-            value={branchId}
-            label="Branch"
-            onChange={(e) => {
-              setBranchId(e.target.value);
-              localStorage.setItem(BRANCH_KEY, e.target.value);
-            }}
-          >
-            {branches.map((b) => (
-              <MenuItem key={b.id} value={b.id}>
-                {b.name}
-              </MenuItem>
-            ))}
-          </Select>
-        </FormControl>
+        {user?.branchId ? (
+          <Alert severity="info" sx={{ flexGrow: 1 }}>
+            Locked to your branch — {user.branchName ? `${user.restaurantName ?? ''} · ${user.branchName}` : 'home floor'}. Contact your owner to move branches.
+          </Alert>
+        ) : (
+          <>
+            <FormControl size="small" sx={{ minWidth: 200, flexGrow: 1 }}>
+              <InputLabel>Restaurant</InputLabel>
+              <Select value={restaurantId} label="Restaurant" onChange={(e) => setRestaurantId(e.target.value)}>
+                {restaurants.map((r) => (
+                  <MenuItem key={r.id} value={r.id}>
+                    {r.name}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+            <FormControl size="small" sx={{ minWidth: 200, flexGrow: 1 }}>
+              <InputLabel>Branch</InputLabel>
+              <Select
+                value={branchId}
+                label="Branch"
+                onChange={(e) => {
+                  setBranchId(e.target.value);
+                  localStorage.setItem(BRANCH_KEY, e.target.value);
+                }}
+              >
+                {branches.map((b) => (
+                  <MenuItem key={b.id} value={b.id}>
+                    {b.name}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+          </>
+        )}
       </Paper>
 
       {!branchId ? (

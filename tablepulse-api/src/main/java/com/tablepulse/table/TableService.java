@@ -199,6 +199,16 @@ public class TableService {
         if (!waiter.isActive() || waiter.getRole() != Role.WAITER) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Tables can only be assigned to an active waiter");
         }
+        // Fix 2: per-branch scoping — Bangalore waiter can never own Noida tables.
+        // Legacy branch-less waiters must be assigned a branch first (hidden from
+        // branch dropdowns until then).
+        if (waiter.getBranch() == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Assign a branch to this waiter first");
+        }
+        if (!waiter.getBranch().getId().equals(t.getBranch().getId())) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Waiter not found");
+        }
         t.setAssignedWaiter(waiter);
         return toResponse(tables.save(t));
     }

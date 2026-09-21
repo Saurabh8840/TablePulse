@@ -16,4 +16,8 @@ public class UserResponse {
     private String phone;
     private Role role;
     private boolean active;
+    private UUID branchId;
+    private String branchName;
+    private UUID restaurantId;
+    private String restaurantName;
 }

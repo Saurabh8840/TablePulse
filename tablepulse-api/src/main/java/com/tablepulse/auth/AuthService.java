@@ -126,6 +126,15 @@ public class AuthService {
     }
 
     private UserResponse toResponse(User user) {
+        var branch = user.getBranch();
+        UUID branchId = branch != null ? branch.getId() : null;
+        String branchName = branch != null ? branch.getName() : null;
+        UUID restaurantId = null;
+        String restaurantName = null;
+        if (branch != null && branch.getRestaurant() != null) {
+            restaurantId = branch.getRestaurant().getId();
+            restaurantName = branch.getRestaurant().getName();
+        }
         return new UserResponse(
                 user.getId(),
                 user.getTenant().getId(),
@@ -133,6 +142,10 @@ public class AuthService {
                 user.getFullName(),
                 user.getPhone(),
                 user.getRole(),
-                user.isActive());
+                user.isActive(),
+                branchId,
+                branchName,
+                restaurantId,
+                restaurantName);
     }
 }

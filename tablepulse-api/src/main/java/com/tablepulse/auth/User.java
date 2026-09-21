@@ -1,5 +1,6 @@
 package com.tablepulse.auth;
 
+import com.tablepulse.restaurant.Branch;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -51,6 +52,15 @@ public class User {
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 30)
     private Role role;
+
+    /**
+     * Branch this staff member belongs to (Fix 2: per-branch scoping).
+     * NULL = tenant-wide (OWNER, or MANAGER over all branches, or legacy
+     * unassigned staff hidden from branch dropdowns until assigned).
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "branch_id")
+    private Branch branch;
 
     @Column(name = "is_active", nullable = false)
     @Builder.Default

@@ -23,6 +23,7 @@ import {
 } from '@mui/material';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import PageHeader from '../../components/layout/PageHeader.jsx';
+import { useAuth } from '../../hooks/useAuth.js';
 import { searchOrders, updateOrderStatus } from '../../services/kitchen.js';
 import { listCategories, listItems, setAvailability } from '../../services/menu.js';
 import { listBranches, listRestaurants } from '../../services/restaurant.js';
@@ -142,6 +143,7 @@ function OrderCard({ order, onAction, acting }) {
 }
 
 export default function KitchenBoard() {
+  const { user } = useAuth();
   const [restaurants, setRestaurants] = useState([]);
   const [restaurantId, setRestaurantId] = useState('');
   const [branches, setBranches] = useState([]);
@@ -160,6 +162,14 @@ export default function KitchenBoard() {
   const [availQuery, setAvailQuery] = useState('');
   const [availMsg, setAvailMsg] = useState(null);
   const knownIds = useRef(new Set());
+
+  // Fix 2: branch-scoped kitchen staff locked to home branch.
+  useEffect(() => {
+    if (user?.branchId && branchId !== user.branchId) {
+      setBranchId(user.branchId);
+      localStorage.setItem(BRANCH_KEY, user.branchId);
+    }
+  }, [user, branchId]);
 
   // Restaurants on mount
   useEffect(() => {
@@ -317,29 +327,37 @@ export default function KitchenBoard() {
       {error && <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>{error}</Alert>}
 
       <Paper variant="outlined" sx={{ p: 1.5, borderRadius: 3, mb: 2, display: 'flex', gap: 1.5, flexWrap: 'wrap' }}>
-        <FormControl size="small" sx={{ minWidth: 200, flexGrow: 1 }}>
-          <InputLabel>Restaurant</InputLabel>
-          <Select value={restaurantId} label="Restaurant" onChange={(e) => setRestaurantId(e.target.value)}>
-            {restaurants.map((r) => (
-              <MenuItem key={r.id} value={r.id}>{r.name}</MenuItem>
-            ))}
-          </Select>
-        </FormControl>
-        <FormControl size="small" sx={{ minWidth: 200, flexGrow: 1 }}>
-          <InputLabel>Branch</InputLabel>
-          <Select
-            value={branchId}
-            label="Branch"
-            onChange={(e) => {
-              setBranchId(e.target.value);
-              localStorage.setItem(BRANCH_KEY, e.target.value);
-            }}
-          >
-            {branches.map((b) => (
-              <MenuItem key={b.id} value={b.id}>{b.name}</MenuItem>
-            ))}
-          </Select>
-        </FormControl>
+        {user?.branchId ? (
+          <Alert severity="info" sx={{ flexGrow: 1 }}>
+            Locked to your branch — {user.branchName ? `${user.restaurantName ?? ''} · ${user.branchName}` : 'home kitchen'}. Contact your owner to move branches.
+          </Alert>
+        ) : (
+          <>
+            <FormControl size="small" sx={{ minWidth: 200, flexGrow: 1 }}>
+              <InputLabel>Restaurant</InputLabel>
+              <Select value={restaurantId} label="Restaurant" onChange={(e) => setRestaurantId(e.target.value)}>
+                {restaurants.map((r) => (
+                  <MenuItem key={r.id} value={r.id}>{r.name}</MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+            <FormControl size="small" sx={{ minWidth: 200, flexGrow: 1 }}>
+              <InputLabel>Branch</InputLabel>
+              <Select
+                value={branchId}
+                label="Branch"
+                onChange={(e) => {
+                  setBranchId(e.target.value);
+                  localStorage.setItem(BRANCH_KEY, e.target.value);
+                }}
+              >
+                {branches.map((b) => (
+                  <MenuItem key={b.id} value={b.id}>{b.name}</MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+          </>
+        )}
       </Paper>
 
       {branchId && (

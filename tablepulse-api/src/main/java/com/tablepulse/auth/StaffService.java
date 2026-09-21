@@ -4,6 +4,8 @@ import com.tablepulse.auth.dto.CreateStaffRequest;
 import com.tablepulse.auth.dto.UpdateStaffRequest;
 import com.tablepulse.auth.dto.UserResponse;
 import com.tablepulse.common.security.TenantGuard;
+import com.tablepulse.restaurant.Branch;
+import com.tablepulse.restaurant.BranchRepository;
 import com.tablepulse.table.RestaurantTable;
 import com.tablepulse.table.RestaurantTableRepository;
 import org.springframework.http.HttpStatus;
@@ -19,9 +21,11 @@ import java.util.Set;
 import java.util.UUID;
 
 /**
- * Staff management (Phase 4). Owner/Manager creates logins for their own
- * tenant — no new tenant is created (unlike public registration).
- * Users table already has role + is_active, so no migration is needed.
+ * Staff management (Phase 4, Fix 2: per-branch scoping).
+ * Owner/Manager creates logins for their own tenant — no new tenant is
+ * created (unlike public registration). WAITER/KITCHEN_STAFF belong to one
+ * branch; MANAGER may be branch-scoped or tenant-wide (null); OWNER is
+ * always tenant-wide. Fresh restaurants show 0 staff until added there.
  */
 @Service
 public class StaffService {
@@ -31,15 +35,17 @@ public class StaffService {
     private final TenantRepository tenants;
     private final UserRepository users;
     private final RestaurantTableRepository tables;
+    private final BranchRepository branches;
     private final TenantGuard guard;
     private final PasswordEncoder passwords;
 
     public StaffService(TenantRepository tenants, UserRepository users,
-                        RestaurantTableRepository tables, TenantGuard guard,
+                        RestaurantTableRepository tables, BranchRepository branches, TenantGuard guard,
                         PasswordEncoder passwords) {
         this.tenants = tenants;
         this.users = users;
         this.tables = tables;
+        this.branches = branches;
         this.guard = guard;
         this.passwords = passwords;
     }
@@ -52,12 +58,14 @@ public class StaffService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                     "Role must be one of MANAGER, WAITER, KITCHEN_STAFF");
         }
+        Branch branch = resolveBranchForRole(req.getRole(), req.getBranchId());
         String email = req.getEmail().trim().toLowerCase(Locale.ROOT);
         if (users.existsByEmailIgnoreCase(email)) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Email is already registered");
         }
         User user = users.save(User.builder()
                 .tenant(caller.getTenant())
+                .branch(branch)
                 .email(email)
                 .passwordHash(passwords.encode(req.getPassword()))
                 .fullName(req.getFullName().trim())
@@ -73,11 +81,30 @@ public class StaffService {
 
     @Transactional(readOnly = true)
     public List<UserResponse> list(UUID callerId) {
+        return list(callerId, null, null);
+    }
+
+    @Transactional(readOnly = true)
+    public List<UserResponse> list(UUID callerId, UUID branchId, UUID restaurantId) {
         User caller = requireActiveUser(callerId);
         requireManagerOrOwner();
         UUID tenantId = caller.getTenant().getId();
-        return users.findByTenant_IdOrderByCreatedAtDesc(tenantId).stream()
-                .map(this::toResponse).toList();
+        List<User> all = users.findByTenant_IdOrderByCreatedAtDesc(tenantId);
+        if (branchId != null) {
+            Branch b = guard.branch(branchId);
+            return all.stream()
+                    .filter(u -> u.getBranch() != null && u.getBranch().getId().equals(b.getId()))
+                    .map(this::toResponse).toList();
+        }
+        if (restaurantId != null) {
+            var restaurant = guard.restaurant(restaurantId);
+            var branchIds = branches.findByRestaurantIdOrderByCreatedAt(restaurant.getId())
+                    .stream().map(Branch::getId).collect(java.util.stream.Collectors.toSet());
+            return all.stream()
+                    .filter(u -> u.getBranch() != null && branchIds.contains(u.getBranch().getId()))
+                    .map(this::toResponse).toList();
+        }
+        return all.stream().map(this::toResponse).toList();
     }
 
     @Transactional
@@ -89,7 +116,7 @@ public class StaffService {
         if (!staff.getTenant().getId().equals(caller.getTenant().getId())) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Staff not found");
         }
-        if (req.getActive() == null && req.getTableIds() == null) {
+        if (req.getActive() == null && req.getTableIds() == null && req.getBranchId() == null) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Nothing to update");
         }
         if (req.getActive() != null) {
@@ -101,6 +128,19 @@ public class StaffService {
             }
             staff.setActive(req.getActive());
         }
+        if (req.getBranchId() != null) {
+            if (staff.getRole() == Role.OWNER || staff.getRole() == Role.PLATFORM_ADMIN) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Owner accounts cannot be moved here");
+            }
+            Branch target = guard.branch(req.getBranchId());
+            staff.setBranch(target);
+            // Moving branches orphans old table ownership — clear it so the old
+            // branch floor returns to house instead of leaking cross-branch.
+            for (RestaurantTable t : tables.findByAssignedWaiterId(staff.getId())) {
+                t.setAssignedWaiter(null);
+                tables.save(t);
+            }
+        }
         if (req.getTableIds() != null) {
             assignTables(staff, req.getTableIds());
         }
@@ -109,7 +149,8 @@ public class StaffService {
 
     /**
      * Replaces a waiter's table ownership. Tables must belong to the staff
-     * member's tenant; tables owned by other waiters move over (rebalance).
+     * member's own branch (Fix 2); tables owned by other waiters move over
+     * (rebalance) only within the same branch.
      */
     private void assignTables(User staff, List<UUID> tableIds) {
         if (staff.getRole() != Role.WAITER) {
@@ -118,7 +159,11 @@ public class StaffService {
             }
             return;
         }
-        UUID tenantId = staff.getTenant().getId();
+        if (staff.getBranch() == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Assign a branch to this waiter first");
+        }
+        UUID staffBranchId = staff.getBranch().getId();
         // Clear current ownership first so deselected tables return to house.
         for (RestaurantTable t : tables.findByAssignedWaiterId(staff.getId())) {
             t.setAssignedWaiter(null);
@@ -126,12 +171,35 @@ public class StaffService {
         }
         for (UUID tableId : tableIds) {
             RestaurantTable t = guard.table(tableId);
-            if (!t.getBranch().getRestaurant().getTenant().getId().equals(tenantId)) {
+            if (!t.getBranch().getId().equals(staffBranchId)) {
                 throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Table not found");
             }
             t.setAssignedWaiter(staff);
             tables.save(t);
         }
+    }
+
+    /**
+     * Validates branch assignment rules per role.
+     * WAITER/KITCHEN_STAFF require a branch in the caller's tenant.
+     * MANAGER may pass null (all branches) or one branch.
+     */
+    private Branch resolveBranchForRole(Role role, UUID branchId) {
+        if (role == Role.WAITER || role == Role.KITCHEN_STAFF) {
+            if (branchId == null) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "branchId is required for " + role);
+            }
+            return guard.branch(branchId);
+        }
+        if (role == Role.MANAGER) {
+            if (branchId == null) return null;
+            return guard.branch(branchId);
+        }
+        if (branchId != null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "branchId is not allowed for this role");
+        }
+        return null;
     }
 
     private User requireActiveUser(UUID userId) {
@@ -152,6 +220,15 @@ public class StaffService {
     }
 
     private UserResponse toResponse(User user) {
+        var branch = user.getBranch();
+        UUID branchId = branch != null ? branch.getId() : null;
+        String branchName = branch != null ? branch.getName() : null;
+        UUID restaurantId = null;
+        String restaurantName = null;
+        if (branch != null && branch.getRestaurant() != null) {
+            restaurantId = branch.getRestaurant().getId();
+            restaurantName = branch.getRestaurant().getName();
+        }
         return new UserResponse(
                 user.getId(),
                 user.getTenant().getId(),
@@ -159,6 +236,10 @@ public class StaffService {
                 user.getFullName(),
                 user.getPhone(),
                 user.getRole(),
-                user.isActive());
+                user.isActive(),
+                branchId,
+                branchName,
+                restaurantId,
+                restaurantName);
     }
 }

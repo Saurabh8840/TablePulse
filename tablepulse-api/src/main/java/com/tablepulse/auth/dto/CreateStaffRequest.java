@@ -32,6 +32,13 @@ public class CreateStaffRequest {
     @NotNull(message = "Role is required")
     private Role role;
 
+    /**
+     * Branch this staff belongs to (Fix 2: per-branch scoping).
+     * Required for WAITER/KITCHEN_STAFF, optional for MANAGER
+     * (null = all branches). Must be rejected for other roles.
+     */
+    private UUID branchId;
+
     /** Tables this waiter owns (owner assigns at setup). Only for WAITER role. */
     private List<UUID> tableIds;
 }

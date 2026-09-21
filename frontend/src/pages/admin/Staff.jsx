@@ -22,36 +22,47 @@ import { useEffect, useState } from 'react';
 import EmptyState from '../../components/EmptyState.jsx';
 import PageHeader from '../../components/layout/PageHeader.jsx';
 import { listBranches, listRestaurants } from '../../services/restaurant.js';
-import { createStaff, listStaff, setStaffActive, setStaffTables } from '../../services/staff.js';
+import { createStaff, listStaff, moveStaffBranch, setStaffActive, setStaffTables } from '../../services/staff.js';
 import { listTables } from '../../services/tables.js';
 
 const ROLE_LABEL = { OWNER: 'Owner', MANAGER: 'Manager', WAITER: 'Waiter', KITCHEN_STAFF: 'Kitchen', PLATFORM_ADMIN: 'Platform' };
 const ROLE_COLOR = { OWNER: 'primary', MANAGER: 'secondary', WAITER: 'info', KITCHEN_STAFF: 'warning' };
 
-const EMPTY = { fullName: '', email: '', password: '', phone: '', role: 'KITCHEN_STAFF', tableIds: [] };
+const EMPTY = { fullName: '', email: '', password: '', phone: '', role: 'WAITER', branchId: '', tableIds: [] };
 
-/** Branch-grouped table checklist for waiter setup. `value` is the complete id set. */
-function WaiterTablePicker({ value, onChange, preloadWaiterId }) {
+/**
+ * Fix 2: table checklist locked to ONE branch.
+ * When fixedBranchId is set, no restaurant/branch pickers are shown and only
+ * that branch's tables can be picked — cross-branch assignment is impossible.
+ */
+function WaiterTablePicker({ value, onChange, fixedBranchId, preloadWaiterId, preloadBranchId }) {
   const [restaurants, setRestaurants] = useState([]);
   const [restaurantId, setRestaurantId] = useState('');
   const [branches, setBranches] = useState([]);
-  const [branchId, setBranchId] = useState('');
+  const [branchId, setBranchId] = useState(fixedBranchId ?? preloadBranchId ?? '');
   const [tables, setTables] = useState([]);
   const [loadingTables, setLoadingTables] = useState(false);
   const [err, setErr] = useState(null);
 
+  const locked = !!(fixedBranchId ?? preloadBranchId);
+
   useEffect(() => {
+    setBranchId(fixedBranchId ?? preloadBranchId ?? '');
+  }, [fixedBranchId, preloadBranchId]);
+
+  useEffect(() => {
+    if (locked) return;
     listRestaurants()
       .then((r) => {
         setRestaurants(r.data ?? []);
         if (r.data?.length === 1) setRestaurantId(r.data[0].id);
       })
       .catch((e) => setErr(e.message));
-  }, []);
+  }, [locked]);
 
   useEffect(() => {
-    if (!restaurantId) {
-      setBranches([]);
+    if (locked || !restaurantId) {
+      if (!locked) setBranches([]);
       return;
     }
     listBranches(restaurantId)
@@ -60,7 +71,7 @@ function WaiterTablePicker({ value, onChange, preloadWaiterId }) {
         setBranchId(r.data?.[0]?.id ?? '');
       })
       .catch((e) => setErr(e.message));
-  }, [restaurantId]);
+  }, [restaurantId, locked]);
 
   useEffect(() => {
     if (!branchId) {
@@ -74,23 +85,16 @@ function WaiterTablePicker({ value, onChange, preloadWaiterId }) {
       .finally(() => setLoadingTables(false));
   }, [branchId]);
 
-  // Edit flow: discover this waiter's tables across all branches once.
+  // Edit flow (locked): discover this waiter's tables in their own branch only.
   useEffect(() => {
-    if (!preloadWaiterId) return;
+    if (!preloadWaiterId || !preloadBranchId) return;
     let alive = true;
     (async () => {
       try {
-        const out = [];
-        const rs = (await listRestaurants()).data ?? [];
-        for (const r of rs) {
-          const bs = (await listBranches(r.id)).data ?? [];
-          for (const b of bs) {
-            const ts = (await listTables(b.id)).data ?? [];
-            ts.filter((t) => t.assignedWaiterId === preloadWaiterId && t.active)
-              .forEach((t) => out.push(t.id));
-          }
+        const ts = (await listTables(preloadBranchId)).data ?? [];
+        if (alive) {
+          onChange(ts.filter((t) => t.assignedWaiterId === preloadWaiterId && t.active).map((t) => t.id));
         }
-        if (alive) onChange(out);
       } catch (e) {
         if (alive) setErr(e.message);
       }
@@ -99,7 +103,7 @@ function WaiterTablePicker({ value, onChange, preloadWaiterId }) {
       alive = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [preloadWaiterId]);
+  }, [preloadWaiterId, preloadBranchId]);
 
   const toggle = (id) =>
     onChange(value.includes(id) ? value.filter((v) => v !== id) : [...value, id]);
@@ -107,22 +111,28 @@ function WaiterTablePicker({ value, onChange, preloadWaiterId }) {
   return (
     <Box>
       <Typography variant="subtitle2" fontWeight={800} sx={{ mb: 1 }}>
-        Assigned tables ({value.length})
+        Assigned tables ({value.length}) — this branch only
       </Typography>
-      <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' }, mb: 1 }}>
-        <TextField label="Restaurant" select value={restaurantId} onChange={(e) => setRestaurantId(e.target.value)}>
-          {restaurants.map((r) => (
-            <MenuItem key={r.id} value={r.id}>{r.name}</MenuItem>
-          ))}
-        </TextField>
-        <TextField label="Branch" select value={branchId} onChange={(e) => setBranchId(e.target.value)}>
-          {branches.map((b) => (
-            <MenuItem key={b.id} value={b.id}>{b.name}</MenuItem>
-          ))}
-        </TextField>
-      </Box>
+      {!locked && (
+        <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' }, mb: 1 }}>
+          <TextField label="Restaurant" select value={restaurantId} onChange={(e) => setRestaurantId(e.target.value)}>
+            {restaurants.map((r) => (
+              <MenuItem key={r.id} value={r.id}>{r.name}</MenuItem>
+            ))}
+          </TextField>
+          <TextField label="Branch" select value={branchId} onChange={(e) => setBranchId(e.target.value)}>
+            {branches.map((b) => (
+              <MenuItem key={b.id} value={b.id}>{b.name}</MenuItem>
+            ))}
+          </TextField>
+        </Box>
+      )}
       {err && <Alert severity="error" sx={{ mb: 1 }}>{err}</Alert>}
-      {loadingTables ? (
+      {!branchId ? (
+        <Typography variant="body2" color="text.secondary">
+          Pick a restaurant → branch first — tables appear here.
+        </Typography>
+      ) : loadingTables ? (
         <CircularProgress size={20} />
       ) : tables.length === 0 ? (
         <Typography variant="body2" color="text.secondary">
@@ -153,6 +163,24 @@ function WaiterTablePicker({ value, onChange, preloadWaiterId }) {
   );
 }
 
+function BranchPicker({ restaurantId, setRestaurantId, branchId, setBranchId, restaurants, branches, label }) {
+  return (
+    <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' } }}>
+      <TextField label={label ?? 'Restaurant'} select value={restaurantId} onChange={(e) => setRestaurantId(e.target.value)}>
+        {restaurants.map((r) => (
+          <MenuItem key={r.id} value={r.id}>{r.name}</MenuItem>
+        ))}
+      </TextField>
+      <TextField label="Branch" select value={branchId} onChange={(e) => setBranchId(e.target.value)}>
+        <MenuItem value="">All branches</MenuItem>
+        {branches.map((b) => (
+          <MenuItem key={b.id} value={b.id}>{b.name}</MenuItem>
+        ))}
+      </TextField>
+    </Box>
+  );
+}
+
 export default function Staff() {
   const [rows, setRows] = useState(null);
   const [error, setError] = useState(null);
@@ -164,24 +192,92 @@ export default function Staff() {
   const [assignIds, setAssignIds] = useState([]);
   const [assignError, setAssignError] = useState(null);
   const [assignSaving, setAssignSaving] = useState(false);
+  // Fix 2: list filter — fresh restaurant/branch shows [] until staff added there.
+  const [restaurants, setRestaurants] = useState([]);
+  const [filterRestaurantId, setFilterRestaurantId] = useState('');
+  const [filterBranches, setFilterBranches] = useState([]);
+  const [filterBranchId, setFilterBranchId] = useState('');
+  // Fix 2: create-form branch selection (required for WAITER/KITCHEN).
+  const [createBranches, setCreateBranches] = useState([]);
+  const [moveBranchId, setMoveBranchId] = useState('');
 
-  const load = () => listStaff().then((r) => setRows(r.data)).catch((e) => setError(e.message));
+  const load = (fBranchId, fRestaurantId) => {
+    const params = {};
+    if (fBranchId) params.branchId = fBranchId;
+    else if (fRestaurantId) params.restaurantId = fRestaurantId;
+    return listStaff(params).then((r) => setRows(r.data)).catch((e) => setError(e.message));
+  };
 
   useEffect(() => {
-    load();
+    listRestaurants()
+      .then((r) => {
+        setRestaurants(r.data ?? []);
+        if ((r.data ?? []).length === 1) setFilterRestaurantId(r.data[0].id);
+      })
+      .catch((e) => setError(e.message));
   }, []);
+
+  useEffect(() => {
+    if (!filterRestaurantId) {
+      setFilterBranches([]);
+      return;
+    }
+    listBranches(filterRestaurantId)
+      .then((r) => setFilterBranches(r.data ?? []))
+      .catch((e) => setError(e.message));
+  }, [filterRestaurantId]);
+
+  useEffect(() => {
+    load(filterBranchId, filterRestaurantId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filterBranchId, filterRestaurantId]);
+
+  // Create-form: load branches for chosen restaurant.
+  const [createRestaurantId, setCreateRestaurantId] = useState('');
+  useEffect(() => {
+    listRestaurants()
+      .then((r) => {
+        if (r.data?.length === 1) setCreateRestaurantId(r.data[0].id);
+      })
+      .catch(() => {});
+  }, [open]);
+
+  useEffect(() => {
+    if (!createRestaurantId) {
+      setCreateBranches([]);
+      return;
+    }
+    listBranches(createRestaurantId)
+      .then((r) => {
+        setCreateBranches(r.data ?? []);
+        if (r.data?.length === 1) setForm((f) => ({ ...f, branchId: r.data[0].id }));
+      })
+      .catch((e) => setFormError(e.message));
+  }, [createRestaurantId]);
+
+  useEffect(() => {
+    if (assignUser) setMoveBranchId(assignUser.branchId ?? '');
+  }, [assignUser]);
 
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
 
   async function onCreate(e) {
     e.preventDefault();
     setFormError(null);
+    if ((form.role === 'WAITER' || form.role === 'KITCHEN_STAFF') && !form.branchId) {
+      setFormError('Pick a restaurant → branch for this staff member.');
+      return;
+    }
     setSaving(true);
     try {
-      await createStaff(form);
+      const payload = { ...form };
+      if (form.role === 'MANAGER' && !payload.branchId) delete payload.branchId;
+      if (!payload.tableIds?.length) delete payload.tableIds;
+      await createStaff(payload);
       setOpen(false);
       setForm(EMPTY);
-      load();
+      setCreateRestaurantId('');
+      load(filterBranchId, filterRestaurantId);
     } catch (err) {
       setFormError(err.message);
     } finally {
@@ -192,7 +288,7 @@ export default function Staff() {
   async function onToggle(u) {
     try {
       await setStaffActive(u.userId, !u.active);
-      load();
+      load(filterBranchId, filterRestaurantId);
     } catch (err) {
       setError(err.message);
     }
@@ -204,9 +300,12 @@ export default function Staff() {
     setAssignError(null);
     setAssignSaving(true);
     try {
+      if (moveBranchId && moveBranchId !== (assignUser.branchId ?? '')) {
+        await moveStaffBranch(assignUser.userId, moveBranchId);
+      }
       await setStaffTables(assignUser.userId, assignIds);
       setAssignUser(null);
-      load();
+      load(filterBranchId, filterRestaurantId);
     } catch (err) {
       setAssignError(err.message);
     } finally {
@@ -214,11 +313,13 @@ export default function Staff() {
     }
   }
 
+  const needsBranch = form.role === 'WAITER' || form.role === 'KITCHEN_STAFF';
+
   return (
     <Box>
       <PageHeader
         title="Staff"
-        subtitle="Kitchen + waiter logins for your restaurants. They log in with email + password."
+        subtitle="Kitchen + waiter logins per branch. A new restaurant shows no staff until you add them here."
         actions={
           <Button variant="contained" startIcon={<AddIcon />} onClick={() => setOpen(true)}>
             Add staff
@@ -226,12 +327,25 @@ export default function Staff() {
         }
       />
       {error && <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>{error}</Alert>}
+      {restaurants.length > 0 && (
+        <Box sx={{ mb: 2 }}>
+          <BranchPicker
+            restaurantId={filterRestaurantId}
+            setRestaurantId={(v) => { setFilterRestaurantId(v); setFilterBranchId(''); }}
+            branchId={filterBranchId}
+            setBranchId={setFilterBranchId}
+            restaurants={restaurants}
+            branches={filterBranches}
+            label="Filter: restaurant"
+          />
+        </Box>
+      )}
       {rows === null && <CircularProgress />}
       {rows !== null && rows.length === 0 && (
         <EmptyState
           icon="👥"
-          title="No staff yet"
-          body="Add your first kitchen or waiter login — they will appear here."
+          title="No staff in this branch yet"
+          body="Add your first kitchen or waiter login for this restaurant → branch — workers from your other restaurants are never shown here."
           actionLabel="Add staff"
           onAction={() => setOpen(true)}
         />
@@ -252,6 +366,11 @@ export default function Staff() {
                 </Typography>
                 <Box sx={{ display: 'flex', gap: 0.5, mt: 0.75, flexWrap: 'wrap' }}>
                   <Chip size="small" label={ROLE_LABEL[u.role] ?? u.role} color={ROLE_COLOR[u.role] ?? 'default'} />
+                  {u.branchName ? (
+                    <Chip size="small" label={`${u.restaurantName ?? ''} · ${u.branchName}`} variant="outlined" />
+                  ) : (
+                    <Chip size="small" label={u.role === 'MANAGER' ? 'All branches' : 'No branch — assign one'} variant="outlined" color={u.role === 'MANAGER' ? 'default' : 'warning'} />
+                  )}
                   {!u.active && <Chip size="small" label="Disabled" color="default" />}
                 </Box>
               </Box>
@@ -288,13 +407,27 @@ export default function Staff() {
                 <MenuItem value="MANAGER">🧑‍💼 Manager</MenuItem>
               </TextField>
             </Box>
+            <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' } }}>
+              <TextField label="Restaurant" select value={createRestaurantId} onChange={(e) => { setCreateRestaurantId(e.target.value); setForm((f) => ({ ...f, branchId: '' })); }}>
+                {(restaurants ?? []).map((r) => (
+                  <MenuItem key={r.id} value={r.id}>{r.name}</MenuItem>
+                ))}
+              </TextField>
+              <TextField label={form.role === 'MANAGER' ? 'Branch (optional = all)' : 'Branch *'} select required={needsBranch} value={form.branchId} onChange={set('branchId')}>
+                {form.role === 'MANAGER' && <MenuItem value="">All branches</MenuItem>}
+                {createBranches.map((b) => (
+                  <MenuItem key={b.id} value={b.id}>{b.name}</MenuItem>
+                ))}
+              </TextField>
+            </Box>
             <Typography variant="caption" color="text.secondary">
-              They log in at /login with this email + password. Kitchen sees the KDS board; waiters get their tables below.
+              They log in at /login with this email + password. Waiters/kitchen belong to one branch only — Bangalore staff never appears in Noida.
             </Typography>
-            {form.role === 'WAITER' && (
+            {form.role === 'WAITER' && form.branchId && (
               <WaiterTablePicker
                 value={form.tableIds ?? []}
                 onChange={(ids) => setForm((f) => ({ ...f, tableIds: ids }))}
+                fixedBranchId={form.branchId}
               />
             )}
             {formError && <Alert severity="error">{formError}</Alert>}
@@ -311,12 +444,16 @@ export default function Staff() {
       <Dialog open={!!assignUser} onClose={() => setAssignUser(null)} fullWidth maxWidth="sm">
         <DialogTitle>Tables — {assignUser?.fullName}</DialogTitle>
         <Box component="form" onSubmit={onSaveAssign}>
-          <DialogContent>
+          <DialogContent sx={{ display: 'grid', gap: 2 }}>
+            <Typography variant="body2" color="text.secondary">
+              {assignUser?.restaurantName} · {assignUser?.branchName} — tables stay inside this branch.
+            </Typography>
             {assignUser && (
               <WaiterTablePicker
                 value={assignIds}
                 onChange={setAssignIds}
                 preloadWaiterId={assignUser.userId}
+                preloadBranchId={assignUser.branchId}
               />
             )}
             {assignError && <Alert severity="error" sx={{ mt: 1 }}>{assignError}</Alert>}

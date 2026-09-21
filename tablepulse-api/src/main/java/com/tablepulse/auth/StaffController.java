@@ -13,13 +13,14 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 import java.util.UUID;
 
-/** Staff logins — JWT required, OWNER/MANAGER only, scoped to own tenant. */
+/** Staff logins — JWT required, OWNER/MANAGER only, scoped to own tenant + branch. */
 @RestController
 @RequestMapping("/api/staff")
 public class StaffController {
@@ -38,8 +39,11 @@ public class StaffController {
     }
 
     @GetMapping
-    public ApiResponse<List<UserResponse>> list(Authentication auth) {
-        return ApiResponse.ok("Staff fetched", staffService.list(UUID.fromString(auth.getName())));
+    public ApiResponse<List<UserResponse>> list(Authentication auth,
+                                                @RequestParam(required = false) UUID branchId,
+                                                @RequestParam(required = false) UUID restaurantId) {
+        return ApiResponse.ok("Staff fetched",
+                staffService.list(UUID.fromString(auth.getName()), branchId, restaurantId));
     }
 
     @PatchMapping("/{id}")

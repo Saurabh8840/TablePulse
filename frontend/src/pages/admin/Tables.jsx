@@ -51,10 +51,13 @@ export default function Tables() {
       .catch((e) => setError(e.message));
 
   useEffect(() => {
-    listStaff()
+    if (!branchId) return;
+    // Fix 2: only this branch's waiters. Fresh branch shows empty + hint,
+    // never workers from other restaurants/branches of the same owner.
+    listStaff({ branchId })
       .then((r) => setWaiters((r.data ?? []).filter((u) => u.role === 'WAITER' && u.active)))
       .catch(() => setWaiters([]));
-  }, []);
+  }, [branchId]);
 
   useEffect(() => {
     load();
@@ -178,6 +181,12 @@ export default function Tables() {
         <Alert severity="warning" sx={{ mb: 2 }}>
           ⚠️ {unassigned} table{unassigned === 1 ? ' has' : 's have'} no waiter — house for now, any waiter can serve.
           Assign every table so each waiter owns their floor.
+        </Alert>
+      )}
+      {rows !== null && waiters.length === 0 && (
+        <Alert severity="info" sx={{ mb: 2 }}>
+          No waiters in this branch yet — add them under Staff (pick this restaurant → branch),
+          then assign them here. Workers from your other restaurants are never shown here.
         </Alert>
       )}
       <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: 'repeat(2, 1fr)', sm: 'repeat(3, 1fr)', lg: 'repeat(4, 1fr)', xl: 'repeat(5, 1fr)' } }}>
