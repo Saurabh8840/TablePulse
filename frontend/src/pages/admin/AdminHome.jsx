@@ -22,7 +22,7 @@ import EmptyState from '../../components/EmptyState.jsx';
 import PageHeader from '../../components/layout/PageHeader.jsx';
 import StatCard from '../../components/StatCard.jsx';
 import { useAuth } from '../../hooks/useAuth.js';
-import { getDashboard, getRevenue, getTopItems } from '../../services/analytics.js';
+import { getDashboard, getRestaurantSummaries, getRevenue, getTopItems } from '../../services/analytics.js';
 import { searchOrders } from '../../services/kitchen.js';
 
 const QUICK_ACTIONS = [
@@ -45,6 +45,7 @@ export default function AdminHome() {
   const { user, loading, logout } = useAuth();
   const navigate = useNavigate();
   const [summary, setSummary] = useState(null);
+  const [outlets, setOutlets] = useState([]);
   const [revenue, setRevenue] = useState([]);
   const [topItems, setTopItems] = useState([]);
   const [history, setHistory] = useState([]);
@@ -58,16 +59,18 @@ export default function AdminHome() {
     setLoadingData(true);
     setError(null);
     try {
-      const [d, r, t, h] = await Promise.all([
+      const [d, r, t, h, o] = await Promise.all([
         getDashboard(),
         getRevenue({ period: 'week' }),
         getTopItems({ limit: 5 }),
         searchOrders({ date: todayKolkata() }),
+        getRestaurantSummaries().catch(() => ({ data: [] })),
       ]);
       setSummary(d.data);
       setRevenue(r.data ?? []);
       setTopItems(t.data ?? []);
       setHistory((h.data ?? []).slice(0, 20));
+      setOutlets(o.data ?? []);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -167,6 +170,55 @@ export default function AdminHome() {
               hint="Placed → ready"
             />
           </div>
+
+          {outlets.length > 0 && (
+            <Box sx={{ mt: 3 }}>
+              <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 1, mb: 1.5 }}>
+                <Typography variant="h6" sx={{ flexGrow: 1 }}>
+                  Your outlets ({outlets.length})
+                </Typography>
+                <Button size="small" variant="text" onClick={() => navigate('/admin/restaurants')}>
+                  All restaurants →
+                </Button>
+              </Box>
+              <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+                {outlets.map((o) => {
+                  const due = Number(o.balanceDue ?? 0);
+                  return (
+                    <Card
+                      key={o.restaurantId}
+                      sx={{
+                        cursor: 'pointer', transition: 'transform .18s ease, box-shadow .18s ease',
+                        '&:hover': { transform: 'translateY(-2px)', boxShadow: 4 },
+                        ...(due > 0 && { borderLeft: 4, borderLeftColor: 'warning.main' }),
+                      }}
+                      onClick={() => navigate(`/admin/restaurants/${o.restaurantId}`)}
+                    >
+                      <CardContent>
+                        <Typography variant="subtitle1" fontWeight={800} noWrap sx={{ letterSpacing: '-0.01em' }}>
+                          {o.name}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
+                          {o.branchCount} branch{o.branchCount === 1 ? '' : 'es'} · {o.activeTables} live table{o.activeTables === 1 ? '' : 's'}
+                        </Typography>
+                        <Typography variant="h5" fontWeight={800} sx={{ fontVariantNumeric: 'tabular-nums' }}>
+                          {inr(o.todayRevenue)}
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary">
+                          {o.ordersToday} order{o.ordersToday === 1 ? '' : 's'} today
+                        </Typography>
+                        {due > 0 && (
+                          <Typography variant="body2" color="warning.main" fontWeight={700} sx={{ mt: 0.5 }}>
+                            {inr(due)} due — collect
+                          </Typography>
+                        )}
+                      </CardContent>
+                    </Card>
+                  );
+                })}
+              </div>
+            </Box>
+          )}
 
           <div className="grid gap-4 mt-4 lg:grid-cols-5">
             <Box sx={{ gridColumn: { lg: 'span 3' } }}>
