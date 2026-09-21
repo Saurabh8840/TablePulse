@@ -1,16 +1,14 @@
 package com.tablepulse.payment;
 
-import com.tablepulse.auth.User;
 import com.tablepulse.auth.UserRepository;
 import com.tablepulse.common.security.TenantGuard;
-import com.tablepulse.order.Order;
 import com.tablepulse.order.OrderRepository;
 import com.tablepulse.order.OrderService;
-import com.tablepulse.order.OrderStatus;
 import com.tablepulse.order.TableSession;
 import com.tablepulse.order.TableSessionRepository;
 import com.tablepulse.order.dto.OrderViews.BillResponse;
 import com.tablepulse.payment.dto.PaymentDtos.PaymentResponse;
+import com.tablepulse.payment.dto.PaymentDtos.PaymentSummary;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.Authentication;
@@ -19,37 +17,36 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
-import java.util.EnumSet;
 import java.util.List;
 import java.util.Optional;
-import java.util.Set;
 import java.util.UUID;
 
 /**
- * Phase 6 — mock payments with strict close.
+ * Phase 6b — pay-anytime mock payments with waiter-only close.
+ * Customer can pay the moment an order is placed (Domino's prepaid) or
+ * later after food is served. Payment NEVER closes the session — only
+ * WaiterService.closeSession() does. Multiple COMPLETED payments per
+ * session are allowed (top-ups when more food is ordered after paying).
  * Bill totals always come from OrderService.bill() (no client-supplied total).
  * Razorpay plugs in later via PaymentGateway without touching service logic.
  */
 @Service
 public class PaymentService {
 
-    /** Same set as WaiterService.BLOCKING — these keep a table busy. */
-    private static final Set<OrderStatus> BLOCKING = EnumSet.of(
-            OrderStatus.PLACED, OrderStatus.ACCEPTED, OrderStatus.PREPARING, OrderStatus.READY);
-
-    /** Gateway seam — mock now, Razorpay later. */
+    /** Gateway seam — mock now, Razorpay later. Amount = exact charge for this transaction. */
     public interface PaymentGateway {
-        String charge(BillResponse bill, PaymentMethod method);
+        String charge(BigDecimal amount, PaymentMethod method);
     }
 
     /** Mock gateway — always succeeds after validation. */
     public static class MockGateway implements PaymentGateway {
         @Override
-        public String charge(BillResponse bill, PaymentMethod method) {
-            if (bill.getTotalAmount() == null || bill.getTotalAmount().signum() <= 0) {
+        public String charge(BigDecimal amount, PaymentMethod method) {
+            if (amount == null || amount.signum() <= 0) {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "No billable amount to charge");
             }
             return "mock-" + UUID.randomUUID().toString().replace("-", "").substring(0, 12);
@@ -84,17 +81,19 @@ public class PaymentService {
     }
 
     // ---------- Customer (public, session-token scoped) ----------
+    // Pay-anytime: no kitchen-status guard. Session stays ACTIVE; waiter closes.
 
     @Transactional
     public PaymentResponse confirmMock(String sessionToken, String methodRaw) {
+        return confirmMock(sessionToken, methodRaw, null, null, null);
+    }
+
+    @Transactional
+    public PaymentResponse confirmMock(String sessionToken, String methodRaw,
+                                       BigDecimal amount, String customerName, String customerPhone) {
         PaymentMethod method = parseMockMethod(methodRaw);
         TableSession session = sessionByToken(sessionToken);
 
-        Optional<Payment> done = payments.findFirstBySessionIdAndStatusOrderByCreatedAtDesc(
-                session.getId(), PaymentStatus.COMPLETED);
-        if (done.isPresent()) {
-            return toResponse(done.get());
-        }
         if (!"ACTIVE".equals(session.getStatus())) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Session is already closed");
         }
@@ -106,49 +105,60 @@ public class PaymentService {
         if (bill.getOrders() == null || bill.getOrders().isEmpty()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "No billable orders yet");
         }
-        assertNoBlockingOrders(session.getId());
-        String gatewayRef = gateway.charge(bill, method);
+        BigDecimal paidTotal = paidTotal(session.getId());
+        BigDecimal balanceDue = bill.getTotalAmount().subtract(paidTotal);
+        if (balanceDue.signum() <= 0) {
+            // Already fully paid — idempotent: return the latest receipt.
+            Payment last = payments.findFirstBySessionIdAndStatusOrderByCreatedAtDesc(
+                    session.getId(), PaymentStatus.COMPLETED)
+                    .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "Already paid in full"));
+            return toResponse(last, paidTotal, BigDecimal.ZERO, "PAID");
+        }
+        BigDecimal chargeAmount = amount != null ? amount : balanceDue;
+        if (chargeAmount.signum() <= 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "amount must be positive");
+        }
+        if (chargeAmount.compareTo(balanceDue) > 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "amount exceeds balance due of " + balanceDue);
+        }
+        String gatewayRef = gateway.charge(chargeAmount, method);
 
-        Payment payment = payments.findFirstBySessionIdAndStatusOrderByCreatedAtDesc(
-                        session.getId(), PaymentStatus.PENDING)
-                .map(p -> {
-                    p.setSubtotal(bill.getSubtotal());
-                    p.setTaxAmount(bill.getTaxAmount());
-                    p.setServiceCharge(bill.getServiceCharge());
-                    p.setTotalAmount(bill.getTotalAmount());
-                    p.setPaymentMethod(method);
-                    p.setStatus(PaymentStatus.COMPLETED);
-                    p.setGatewayRef(gatewayRef);
-                    p.setPaidAt(Instant.now());
-                    return p;
-                })
-                .orElseGet(() -> Payment.builder()
-                        .session(session)
-                        .tenant(session.getTable().getBranch().getRestaurant().getTenant())
-                        .branch(session.getTable().getBranch())
-                        .subtotal(bill.getSubtotal())
-                        .taxAmount(bill.getTaxAmount())
-                        .serviceCharge(bill.getServiceCharge())
-                        .totalAmount(bill.getTotalAmount())
-                        .paymentMethod(method)
-                        .status(PaymentStatus.COMPLETED)
-                        .gatewayRef(gatewayRef)
-                        .paidAt(Instant.now())
-                        .build());
+        // Each top-up is its own COMPLETED row; totalAmount = this charge.
+        // Subtotal/tax/service snapshot the bill at charge time (informational).
+        Payment payment = Payment.builder()
+                .session(session)
+                .tenant(session.getTable().getBranch().getRestaurant().getTenant())
+                .branch(session.getTable().getBranch())
+                .subtotal(bill.getSubtotal())
+                .taxAmount(bill.getTaxAmount())
+                .serviceCharge(bill.getServiceCharge())
+                .totalAmount(chargeAmount)
+                .paymentMethod(method)
+                .status(PaymentStatus.COMPLETED)
+                .gatewayRef(gatewayRef)
+                .customerName(trimOrNull(customerName))
+                .customerPhone(trimOrNull(customerPhone))
+                .paidAt(Instant.now())
+                .build();
         Payment saved = payments.save(payment);
-        closeSessionWithCompletedOrders(session, null);
-        return toResponse(saved);
+        // Session stays ACTIVE — waiter closes the table, never payment.
+        BigDecimal newPaid = paidTotal.add(chargeAmount);
+        BigDecimal newBalance = bill.getTotalAmount().subtract(newPaid);
+        if (newBalance.signum() < 0) newBalance = BigDecimal.ZERO;
+        return toResponse(saved, newPaid, newBalance,
+                newBalance.signum() <= 0 ? "PAID" : "PARTIAL");
     }
 
     @Transactional
     public PaymentResponse payAtCounter(String sessionToken) {
+        return payAtCounter(sessionToken, null, null);
+    }
+
+    @Transactional
+    public PaymentResponse payAtCounter(String sessionToken, String customerName, String customerPhone) {
         TableSession session = sessionByToken(sessionToken);
 
-        Optional<Payment> done = payments.findFirstBySessionIdAndStatusOrderByCreatedAtDesc(
-                session.getId(), PaymentStatus.COMPLETED);
-        if (done.isPresent()) {
-            return toResponse(done.get());
-        }
         if (!"ACTIVE".equals(session.getStatus())) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Session is already closed");
         }
@@ -160,13 +170,30 @@ public class PaymentService {
         if (bill.getOrders() == null || bill.getOrders().isEmpty()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "No billable orders yet");
         }
-        assertNoBlockingOrders(session.getId());
+        BigDecimal paidTotal = paidTotal(session.getId());
+        BigDecimal balanceDue = bill.getTotalAmount().subtract(paidTotal);
+        if (balanceDue.signum() <= 0) {
+            Payment last = payments.findFirstBySessionIdAndStatusOrderByCreatedAtDesc(
+                    session.getId(), PaymentStatus.COMPLETED)
+                    .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "Already paid in full"));
+            return toResponse(last, paidTotal, BigDecimal.ZERO, "PAID");
+        }
 
         Optional<Payment> pendingCash = payments.findFirstBySessionIdAndStatusOrderByCreatedAtDesc(
                         session.getId(), PaymentStatus.PENDING)
                 .filter(p -> p.getPaymentMethod() == PaymentMethod.CASH);
         if (pendingCash.isPresent()) {
-            return toResponse(pendingCash.get());
+            // Bill may have grown since the customer tapped — refresh the pending amount.
+            Payment p = pendingCash.get();
+            p.setSubtotal(bill.getSubtotal());
+            p.setTaxAmount(bill.getTaxAmount());
+            p.setServiceCharge(bill.getServiceCharge());
+            p.setTotalAmount(balanceDue);
+            if (trimOrNull(customerName) != null) p.setCustomerName(customerName.trim());
+            if (trimOrNull(customerPhone) != null) p.setCustomerPhone(customerPhone.trim());
+            Payment saved = payments.save(p);
+            return toResponse(saved, paidTotal, balanceDue,
+                    paidTotal.signum() <= 0 ? "UNPAID" : "PARTIAL");
         }
 
         Payment saved = payments.save(Payment.builder()
@@ -176,11 +203,31 @@ public class PaymentService {
                 .subtotal(bill.getSubtotal())
                 .taxAmount(bill.getTaxAmount())
                 .serviceCharge(bill.getServiceCharge())
-                .totalAmount(bill.getTotalAmount())
+                .totalAmount(balanceDue)
                 .paymentMethod(PaymentMethod.CASH)
                 .status(PaymentStatus.PENDING)
+                .customerName(trimOrNull(customerName))
+                .customerPhone(trimOrNull(customerPhone))
                 .build());
-        return toResponse(saved);
+        return toResponse(saved, paidTotal, balanceDue,
+                paidTotal.signum() <= 0 ? "UNPAID" : "PARTIAL");
+    }
+
+    @Transactional(readOnly = true)
+    public PaymentSummary paymentSummary(String sessionToken) {
+        TableSession session = sessionByToken(sessionToken);
+        BillResponse bill = orderService.bill(session.getSessionToken());
+        BigDecimal paid = paidTotal(session.getId());
+        BigDecimal pendingCash = payments.findBySessionIdOrderByCreatedAtDesc(session.getId()).stream()
+                .filter(p -> p.getStatus() == PaymentStatus.PENDING
+                        && p.getPaymentMethod() == PaymentMethod.CASH
+                        && p.getTotalAmount() != null)
+                .map(Payment::getTotalAmount)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal balance = bill.getTotalAmount().subtract(paid);
+        if (balance.signum() < 0) balance = BigDecimal.ZERO;
+        String status = paid.signum() <= 0 ? "UNPAID" : balance.signum() <= 0 ? "PAID" : "PARTIAL";
+        return new PaymentSummary(session.getId(), bill.getTotalAmount(), paid, pendingCash, balance, status);
     }
 
     // ---------- Staff (JWT, tenant scoped) ----------
@@ -204,7 +251,15 @@ public class PaymentService {
             }
         }
         return payments.search(tenantId, branchId, from, to).stream()
-                .map(this::toResponse)
+                .map(p -> {
+                    BigDecimal paid = paidTotal(p.getSession().getId());
+                    BillResponse bill = orderService.bill(p.getSession().getSessionToken());
+                    BigDecimal balance = bill.getTotalAmount().subtract(paid);
+                    if (balance.signum() < 0) balance = BigDecimal.ZERO;
+                    String st = paid.signum() <= 0 ? "UNPAID"
+                            : balance.signum() <= 0 ? "PAID" : "PARTIAL";
+                    return toResponse(p, paid, balance, st);
+                })
                 .toList();
     }
 
@@ -217,37 +272,39 @@ public class PaymentService {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Payment not found");
         }
         if (payment.getStatus() == PaymentStatus.COMPLETED) {
-            return toResponse(payment);
+            PaymentSummary summary = paymentSummary(payment.getSession().getSessionToken());
+            return toResponse(payment, summary.getPaidTotal(), summary.getBalanceDue(),
+                    summary.getPaymentStatus());
         }
         if (payment.getStatus() != PaymentStatus.PENDING) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Only pending payments can be completed");
         }
 
         TableSession session = payment.getSession();
-        Optional<Payment> done = payments.findFirstBySessionIdAndStatusOrderByCreatedAtDesc(
-                session.getId(), PaymentStatus.COMPLETED);
-        if (done.isPresent()) {
-            return toResponse(done.get());
-        }
         if (!"ACTIVE".equals(session.getStatus())) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Session is already closed");
         }
-        assertNoBlockingOrders(session.getId());
-
         // Recompute from bill() so totals can't drift if more orders arrived.
+        // Collect the full remaining balance in this cash tap (top-ups stay digital).
         BillResponse bill = orderService.bill(session.getSessionToken());
+        BigDecimal paidExcludingThis = paidTotal(session.getId());
+        BigDecimal balanceDue = bill.getTotalAmount().subtract(paidExcludingThis);
+        if (balanceDue.signum() <= 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Session is already paid in full");
+        }
         payment.setSubtotal(bill.getSubtotal());
         payment.setTaxAmount(bill.getTaxAmount());
         payment.setServiceCharge(bill.getServiceCharge());
-        payment.setTotalAmount(bill.getTotalAmount());
+        payment.setTotalAmount(balanceDue);
         payment.setStatus(PaymentStatus.COMPLETED);
         payment.setPaidAt(Instant.now());
         if (payment.getGatewayRef() == null) {
             payment.setGatewayRef("cash-" + UUID.randomUUID().toString().replace("-", "").substring(0, 8));
         }
         Payment saved = payments.save(payment);
-        closeSessionWithCompletedOrders(session, currentUser());
-        return toResponse(saved);
+        // Session stays ACTIVE — waiter closes the table via closeSession().
+        BigDecimal newPaid = paidExcludingThis.add(balanceDue);
+        return toResponse(saved, newPaid, BigDecimal.ZERO, "PAID");
     }
 
     // ---------- internals ----------
@@ -267,29 +324,17 @@ public class PaymentService {
         }
     }
 
-    private void assertNoBlockingOrders(UUID sessionId) {
-        long blocking = orders.findBySessionIdOrderByPlacedAtAsc(sessionId).stream()
-                .filter(o -> BLOCKING.contains(o.getStatus()))
-                .count();
-        if (blocking > 0) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "Serve or cancel " + blocking + " open order(s) first");
-        }
+    /** SUM of COMPLETED charges for a session — the single paid-math helper. */
+    private BigDecimal paidTotal(UUID sessionId) {
+        return payments.findBySessionIdOrderByCreatedAtDesc(sessionId).stream()
+                .filter(p -> p.getStatus() == PaymentStatus.COMPLETED && p.getTotalAmount() != null)
+                .map(Payment::getTotalAmount)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
     }
 
-    private void closeSessionWithCompletedOrders(TableSession session, User closedBy) {
-        Instant now = Instant.now();
-        for (Order o : orders.findBySessionIdOrderByPlacedAtAsc(session.getId())) {
-            if (o.getStatus() == OrderStatus.SERVED) {
-                o.setStatus(OrderStatus.COMPLETED);
-                o.setCompletedAt(now);
-                orders.save(o);
-            }
-        }
-        session.setStatus("CLOSED");
-        session.setClosedAt(now);
-        session.setClosedBy(closedBy);
-        sessions.save(session);
+    private String trimOrNull(String raw) {
+        if (raw == null || raw.isBlank()) return null;
+        return raw.trim();
     }
 
     private TableSession sessionByToken(String token) {
@@ -298,15 +343,6 @@ public class PaymentService {
         }
         return sessions.findBySessionToken(token.trim())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Session not found"));
-    }
-
-    private User currentUser() {
-        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-        if (auth == null) {
-            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid or expired token");
-        }
-        return users.findById(UUID.fromString(auth.getName()))
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid or expired token"));
     }
 
     private void requireFloorRole() {
@@ -319,13 +355,17 @@ public class PaymentService {
         }
     }
 
-    private PaymentResponse toResponse(Payment p) {
+    private PaymentResponse toResponse(Payment p, BigDecimal paidTotal, BigDecimal balanceDue,
+                                       String paymentStatus) {
         return new PaymentResponse(
                 p.getId(),
                 p.getSession().getId(),
                 p.getTotalAmount(),
                 p.getPaymentMethod() != null ? p.getPaymentMethod().name() : null,
                 p.getStatus() != null ? p.getStatus().name() : null,
-                p.getPaidAt());
+                p.getPaidAt(),
+                paidTotal,
+                balanceDue,
+                paymentStatus);
     }
 }

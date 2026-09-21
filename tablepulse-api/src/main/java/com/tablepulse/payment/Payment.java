@@ -76,6 +76,13 @@ public class Payment {
     @Column(name = "gateway_ref", length = 100)
     private String gatewayRef;
 
+    /** Optional payer identity for receipts + waiter collection (no login/OTP). */
+    @Column(name = "customer_name", length = 100)
+    private String customerName;
+
+    @Column(name = "customer_phone", length = 20)
+    private String customerPhone;
+
     @Column(name = "paid_at")
     private Instant paidAt;
 

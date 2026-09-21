@@ -1,6 +1,7 @@
 package com.tablepulse.order;
 
 import com.tablepulse.auth.Tenant;
+import com.tablepulse.auth.TenantContext;
 import com.tablepulse.auth.UserRepository;
 import com.tablepulse.common.security.TenantGuard;
 import com.tablepulse.menu.MenuCategory;
@@ -34,6 +35,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -68,6 +70,8 @@ class OrderServiceTest {
     private UserRepository users;
     @Mock
     private TenantGuard guard;
+    @Mock
+    private com.tablepulse.payment.PaymentRepository payments;
 
     private OrderService service;
     private TableSession session;
@@ -80,7 +84,7 @@ class OrderServiceTest {
     @BeforeEach
     void setUp() {
         service = new OrderService(sessions, orders, orderItems, itemModifiers, counters,
-                tables, branches, menuItems, modifierGroups, modifierOptions, users, guard);
+                tables, branches, menuItems, modifierGroups, modifierOptions, users, guard, payments);
         tenantId = UUID.randomUUID();
         Tenant tenant = Tenant.builder().id(tenantId).name("MamaBhanje Foods").slug("mamabhanje").build();
         Restaurant restaurant = Restaurant.builder()
@@ -100,17 +104,18 @@ class OrderServiceTest {
                 .id(itemId).category(category).name("Thali").price(new BigDecimal("249.00"))
                 .active(true).available(true).build();
 
-        when(sessions.findBySessionToken("tok")).thenReturn(Optional.of(session));
-        when(menuItems.findById(itemId)).thenReturn(Optional.of(item));
-        when(modifierGroups.findByMenuItemIdOrderByDisplayOrderAsc(itemId)).thenReturn(List.of());
-        when(orderItems.save(any())).thenAnswer(inv -> inv.getArgument(0));
-        when(orders.save(any())).thenAnswer(inv -> {
+        // Lenient: the liveOnly test exercises a different path than placeOrder.
+        lenient().when(sessions.findBySessionToken("tok")).thenReturn(Optional.of(session));
+        lenient().when(menuItems.findById(itemId)).thenReturn(Optional.of(item));
+        lenient().when(modifierGroups.findByMenuItemIdOrderByDisplayOrderAsc(itemId)).thenReturn(List.of());
+        lenient().when(orderItems.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        lenient().when(orders.save(any())).thenAnswer(inv -> {
             Order o = inv.getArgument(0);
             if (o.getId() == null) o.setId(UUID.randomUUID());
             return o;
         });
-        when(counters.save(any())).thenAnswer(inv -> inv.getArgument(0));
-        when(counters.saveAndFlush(any())).thenAnswer(inv -> inv.getArgument(0));
+        lenient().when(counters.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        lenient().when(counters.saveAndFlush(any())).thenAnswer(inv -> inv.getArgument(0));
     }
 
     private PlaceOrderRequest request() {
@@ -167,5 +172,37 @@ class OrderServiceTest {
         OrderResponse res = service.placeOrder(request());
 
         assertThat(res.getOrderNumber()).isEqualTo("ORD-1001");
+    }
+
+    @Test
+    void liveOnlyPollHitsFindLiveAndBatchesLines() {
+        TenantContext.set(tenantId);
+        try {
+            when(guard.branch(branchId)).thenReturn(branch);
+            RestaurantTable table = RestaurantTable.builder()
+                    .id(UUID.randomUUID()).branch(branch).tableNumber("T10").active(true).build();
+            Order live = Order.builder()
+                    .id(UUID.randomUUID()).orderNumber("ORD-1010")
+                    .table(table).branch(branch)
+                    .status(OrderStatus.PLACED)
+                    .subtotal(BigDecimal.ZERO).taxAmount(BigDecimal.ZERO)
+                    .totalAmount(new BigDecimal("100.00"))
+                    .build();
+            when(orders.findLive(tenantId, branchId)).thenReturn(List.of(live));
+
+            List<OrderResponse> res = service.searchOrders(branchId, null, null, true);
+
+            assertThat(res).hasSize(1);
+            assertThat(res.get(0).getOrderNumber()).isEqualTo("ORD-1010");
+            assertThat(res.get(0).getTableNumber()).isEqualTo("T10");
+            assertThat(res.get(0).getItems()).isEmpty();
+            verify(orders).findLive(tenantId, branchId);
+            verify(orders, org.mockito.Mockito.never())
+                    .search(any(), any(), any(), any(), any());
+            // Lines batched in one shot — no per-order round trips.
+            verify(orderItems).findByOrderIdIn(List.of(live.getId()));
+        } finally {
+            TenantContext.clear();
+        }
     }
 }

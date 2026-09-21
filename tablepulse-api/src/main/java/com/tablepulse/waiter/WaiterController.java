@@ -12,6 +12,8 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 import java.util.UUID;
 
+import org.springframework.web.bind.annotation.RequestParam;
+
 /** Phase 5 — waiter floor APIs. JWT required, tenant scoped via WaiterService. */
 @RestController
 @RequestMapping("/api")
@@ -29,7 +31,8 @@ public class WaiterController {
     }
 
     @PostMapping("/sessions/{id}/close")
-    public ApiResponse<SessionResponse> close(@PathVariable UUID id) {
-        return ApiResponse.ok("Table closed", service.closeSession(id));
+    public ApiResponse<SessionResponse> close(@PathVariable UUID id,
+                                              @RequestParam(defaultValue = "false") boolean force) {
+        return ApiResponse.ok("Table closed", service.closeSession(id, force));
     }
 }

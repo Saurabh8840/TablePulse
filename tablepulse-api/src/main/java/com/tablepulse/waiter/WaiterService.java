@@ -5,10 +5,15 @@ import com.tablepulse.auth.UserRepository;
 import com.tablepulse.common.security.TenantGuard;
 import com.tablepulse.order.Order;
 import com.tablepulse.order.OrderRepository;
+import com.tablepulse.order.OrderService;
 import com.tablepulse.order.OrderStatus;
 import com.tablepulse.order.TableSession;
 import com.tablepulse.order.TableSessionRepository;
+import com.tablepulse.order.dto.OrderViews.BillResponse;
 import com.tablepulse.order.dto.OrderViews.SessionResponse;
+import com.tablepulse.payment.PaymentMethod;
+import com.tablepulse.payment.PaymentRepository;
+import com.tablepulse.payment.PaymentStatus;
 import com.tablepulse.table.RestaurantTable;
 import com.tablepulse.table.RestaurantTableRepository;
 import com.tablepulse.waiter.dto.TableStatusResponse;
@@ -48,14 +53,19 @@ public class WaiterService {
     private final OrderRepository orders;
     private final UserRepository users;
     private final TenantGuard guard;
+    private final OrderService orderService;
+    private final PaymentRepository payments;
 
     public WaiterService(RestaurantTableRepository tables, TableSessionRepository sessions,
-                         OrderRepository orders, UserRepository users, TenantGuard guard) {
+                         OrderRepository orders, UserRepository users, TenantGuard guard,
+                         OrderService orderService, PaymentRepository payments) {
         this.tables = tables;
         this.sessions = sessions;
         this.orders = orders;
         this.users = users;
         this.guard = guard;
+        this.orderService = orderService;
+        this.payments = payments;
     }
 
     @Transactional(readOnly = true)
@@ -109,13 +119,33 @@ public class WaiterService {
                     t.getStatus(), display, s != null ? s.getId() : null,
                     live.size(), ready, oldest,
                     t.getAssignedWaiter() != null ? t.getAssignedWaiter().getId() : null,
-                    t.getAssignedWaiter() != null ? t.getAssignedWaiter().getFullName() : null));
+                    t.getAssignedWaiter() != null ? t.getAssignedWaiter().getFullName() : null,
+                    s != null ? billOf(s).getPaidTotal() : null,
+                    s != null ? billOf(s).getBalanceDue() : null,
+                    s != null ? billOf(s).getPaymentStatus() : null,
+                    s != null && hasPendingCash(s.getId())));
         }
         return out;
     }
 
+    /** Bill (with paid math) for a session — safe to call per table for pilot floors. */
+    private BillResponse billOf(TableSession s) {
+        return orderService.bill(s.getSessionToken());
+    }
+
+    private boolean hasPendingCash(UUID sessionId) {
+        return payments.findBySessionIdOrderByCreatedAtDesc(sessionId).stream()
+                .anyMatch(p -> p.getStatus() == PaymentStatus.PENDING
+                        && p.getPaymentMethod() == PaymentMethod.CASH);
+    }
+
     @Transactional
     public SessionResponse closeSession(UUID sessionId) {
+        return closeSession(sessionId, false);
+    }
+
+    @Transactional
+    public SessionResponse closeSession(UUID sessionId, boolean force) {
         requireFloorRole();
         TableSession s = sessions.findById(sessionId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Session not found"));
@@ -130,6 +160,17 @@ public class WaiterService {
         if (blocking > 0) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                     "Table has " + blocking + " open order" + (blocking == 1 ? "" : "s") + " — serve or cancel them first");
+        }
+        // Pay-anytime: payment never closes the table, but close requires the
+        // bill settled — unless a manager/owner explicitly force-closes.
+        BillResponse bill = orderService.bill(s.getSessionToken());
+        if (bill.getBalanceDue() != null && bill.getBalanceDue().signum() > 0) {
+            if (!force) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "Collect ₹" + bill.getBalanceDue() + " first — table is "
+                                + bill.getPaymentStatus() + " (or force-close as manager)");
+            }
+            requireManagerOrOwner();
         }
         Instant now = Instant.now();
         // Settle any served-but-uncompleted orders (e.g. never tapped
@@ -148,7 +189,8 @@ public class WaiterService {
         return new SessionResponse(saved.getId(), saved.getSessionToken(), saved.getTable().getId(),
                 saved.getTable().getTableNumber(), saved.getTable().getBranch().getId(),
                 saved.getTable().getBranch().getRestaurant().getSlug(), saved.getStatus(), saved.getStartedAt(),
-                saved.getClosedBy() != null ? saved.getClosedBy().getFullName() : null);
+                saved.getClosedBy() != null ? saved.getClosedBy().getFullName() : null,
+                OrderService.firstNameOf(saved.getTable().getAssignedWaiter()));
     }
 
     private User currentUser() {
@@ -167,6 +209,15 @@ public class WaiterService {
                         || a.getAuthority().equals("ROLE_MANAGER")
                         || a.getAuthority().equals("ROLE_OWNER"))) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Only waiter, manager or owner can do this");
+        }
+    }
+
+    private void requireManagerOrOwner() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null || auth.getAuthorities().stream().noneMatch(a ->
+                a.getAuthority().equals("ROLE_MANAGER")
+                        || a.getAuthority().equals("ROLE_OWNER"))) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Only a manager or owner can force-close an unpaid table");
         }
     }
 }

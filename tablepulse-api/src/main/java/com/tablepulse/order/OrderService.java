@@ -19,6 +19,8 @@ import com.tablepulse.order.dto.OrderViews.ModifierSelection;
 import com.tablepulse.order.dto.OrderViews.OrderLine;
 import com.tablepulse.order.dto.OrderViews.OrderResponse;
 import com.tablepulse.order.dto.OrderViews.SessionResponse;
+import com.tablepulse.payment.PaymentRepository;
+import com.tablepulse.payment.PaymentStatus;
 import com.tablepulse.restaurant.Branch;
 import com.tablepulse.restaurant.BranchRepository;
 import com.tablepulse.restaurant.Restaurant;
@@ -62,13 +64,14 @@ public class OrderService {
     private final ModifierOptionRepository modifierOptions;
     private final UserRepository users;
     private final TenantGuard guard;
+    private final PaymentRepository payments;
 
     public OrderService(TableSessionRepository sessions, OrderRepository orders,
                         OrderItemRepository orderItems, OrderItemModifierRepository itemModifiers,
                         OrderNumberCounterRepository counters, RestaurantTableRepository tables,
                         BranchRepository branches, MenuItemRepository menuItems,
                         ModifierGroupRepository modifierGroups, ModifierOptionRepository modifierOptions,
-                        UserRepository users, TenantGuard guard) {
+                        UserRepository users, TenantGuard guard, PaymentRepository payments) {
         this.sessions = sessions;
         this.orders = orders;
         this.orderItems = orderItems;
@@ -81,6 +84,7 @@ public class OrderService {
         this.modifierOptions = modifierOptions;
         this.users = users;
         this.guard = guard;
+        this.payments = payments;
     }
 
     // ---------- Customer (public, session-token scoped) ----------
@@ -227,16 +231,39 @@ public class OrderService {
             lines.add(new BillLine(o.getOrderNumber(), count + (count == 1 ? " item" : " items"), o.getTotalAmount()));
         }
         BigDecimal service = pct(subtotal, restaurant.getServiceChargePercentage());
+        BigDecimal total = subtotal.add(tax).add(service);
+        // Pay-anytime: paid math lives here so bill + waiter + payment-status agree.
+        BigDecimal paidTotal = payments.findBySessionIdOrderByCreatedAtDesc(session.getId()).stream()
+                .filter(p -> p.getStatus() == PaymentStatus.COMPLETED && p.getTotalAmount() != null)
+                .map(p -> p.getTotalAmount())
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal balanceDue = total.subtract(paidTotal);
+        if (balanceDue.signum() < 0) balanceDue = BigDecimal.ZERO;
+        String paymentStatus = paidTotal.signum() <= 0 ? "UNPAID"
+                : balanceDue.signum() <= 0 ? "PAID" : "PARTIAL";
         return new BillResponse(session.getTable().getTableNumber(), lines, subtotal, tax, service,
-                subtotal.add(tax).add(service));
+                total, paidTotal, balanceDue, paymentStatus);
     }
 
     // ---------- Staff (JWT, tenant scoped) ----------
 
     @Transactional(readOnly = true)
     public List<OrderResponse> searchOrders(UUID branchId, String status, String date) {
+        return searchOrders(branchId, status, date, false);
+    }
+
+    @Transactional(readOnly = true)
+    public List<OrderResponse> searchOrders(UUID branchId, String status, String date, boolean liveOnly) {
         UUID tenantId = TenantGuard.tenantId();
         if (branchId != null) guard.branch(branchId);
+        if (liveOnly) {
+            // Rush-hour poll: live tickets only, oldest first, lines batched
+            // (2 queries total — no N+1 no matter how many tickets are live).
+            if (branchId == null) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "branchId is required for live orders");
+            }
+            return toOrderResponses(orders.findLive(tenantId, branchId));
+        }
         OrderStatus st = null;
         if (status != null && !"ALL".equalsIgnoreCase(status)) {
             try {
@@ -257,9 +284,38 @@ public class OrderService {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Date must be YYYY-MM-DD");
             }
         }
+        return toOrderResponses(orders.search(tenantId, branchId, st, from, to));
+    }
+
+    /**
+     * Hydrates orders with lines in 3 queries total (orders + items + modifiers)
+     * instead of 2 per order. Same shape as the per-order path.
+     */
+    private List<OrderResponse> toOrderResponses(List<Order> found) {
+        if (found.isEmpty()) return List.of();
+        List<UUID> orderIds = found.stream().map(Order::getId).toList();
+        Map<UUID, List<OrderItem>> itemsByOrder = new HashMap<>();
+        for (OrderItem i : orderItems.findByOrderIdIn(orderIds)) {
+            itemsByOrder.computeIfAbsent(i.getOrder().getId(), k -> new ArrayList<>()).add(i);
+        }
+        List<UUID> itemIds = itemsByOrder.values().stream()
+                .flatMap(List::stream).map(OrderItem::getId).toList();
+        Map<UUID, List<ModifierSelection>> modsByItem = new HashMap<>();
+        if (!itemIds.isEmpty()) {
+            for (OrderItemModifier m : itemModifiers.findByOrderItemIdIn(itemIds)) {
+                modsByItem.computeIfAbsent(m.getOrderItem().getId(), k -> new ArrayList<>())
+                        .add(new ModifierSelection(m.getModifierName(), m.getAdditionalPrice()));
+            }
+        }
         List<OrderResponse> out = new ArrayList<>();
-        for (Order o : orders.search(tenantId, branchId, st, from, to)) {
-            out.add(toOrder(o, linesOf(o.getId())));
+        for (Order o : found) {
+            List<OrderLine> lines = new ArrayList<>();
+            for (OrderItem i : itemsByOrder.getOrDefault(o.getId(), List.of())) {
+                lines.add(new OrderLine(i.getMenuItem().getId(), i.getMenuItemName(), i.getQuantity(),
+                        i.getUnitPrice(), i.getModifiersPrice(), i.getTotalPrice(),
+                        i.getSpecialInstructions(), modsByItem.getOrDefault(i.getId(), List.of())));
+            }
+            out.add(toOrder(o, lines));
         }
         return out;
     }
@@ -532,7 +588,16 @@ public class OrderService {
         return new SessionResponse(s.getId(), s.getSessionToken(), s.getTable().getId(),
                 s.getTable().getTableNumber(), s.getTable().getBranch().getId(),
                 s.getTable().getBranch().getRestaurant().getSlug(), s.getStatus(), s.getStartedAt(),
-                s.getClosedBy() != null ? s.getClosedBy().getFullName() : null);
+                s.getClosedBy() != null ? s.getClosedBy().getFullName() : null,
+                firstNameOf(s.getTable().getAssignedWaiter()));
+    }
+
+    /** Customer-facing waiter credit — first name only, null when unassigned (House). */
+    public static String firstNameOf(com.tablepulse.auth.User waiter) {
+        if (waiter == null || waiter.getFullName() == null || waiter.getFullName().isBlank()) {
+            return null;
+        }
+        return waiter.getFullName().trim().split("\\s+")[0];
     }
 
     private OrderResponse toOrder(Order o, List<OrderLine> lines) {

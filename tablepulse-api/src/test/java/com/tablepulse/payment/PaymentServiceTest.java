@@ -99,7 +99,7 @@ class PaymentServiceTest {
         return new BillResponse("T12",
                 List.of(new BillLine("ORD-1042", "2 items", new BigDecimal("498.00"))),
                 new BigDecimal("498.00"), new BigDecimal("24.90"), new BigDecimal("49.80"),
-                new BigDecimal("572.70"));
+                new BigDecimal("572.70"), BigDecimal.ZERO, new BigDecimal("572.70"), "UNPAID");
     }
 
     private Order order(OrderStatus status) {
@@ -116,51 +116,82 @@ class PaymentServiceTest {
     }
 
     @Test
-    void strictBlockRejectsLivePlacedOrder() {
+    void earlyPayWithOpenOrderSucceedsAndKeepsSessionOpen() {
         when(sessions.findBySessionToken("tok123")).thenReturn(Optional.of(session));
-        when(payments.findFirstBySessionIdAndStatusOrderByCreatedAtDesc(sessionId, PaymentStatus.COMPLETED))
-                .thenReturn(Optional.empty());
         when(orderService.bill("tok123")).thenReturn(bill());
-        when(orders.findBySessionIdOrderByPlacedAtAsc(sessionId))
-                .thenReturn(List.of(order(OrderStatus.PLACED)));
-
-        assertThatThrownBy(() -> service.confirmMock("tok123", "MOCK_UPI"))
-                .isInstanceOf(ResponseStatusException.class)
-                .extracting(ex -> ((ResponseStatusException) ex).getStatusCode())
-                .isEqualTo(HttpStatus.BAD_REQUEST);
-        assertThatThrownBy(() -> service.confirmMock("tok123", "MOCK_UPI"))
-                .hasMessageContaining("open order");
-        verify(payments, never()).save(any());
-    }
-
-    @Test
-    void happyMockPayClosesSessionAndCompletesServedOrders() {
-        Order served = order(OrderStatus.SERVED);
-        when(sessions.findBySessionToken("tok123")).thenReturn(Optional.of(session));
-        when(payments.findFirstBySessionIdAndStatusOrderByCreatedAtDesc(sessionId, PaymentStatus.COMPLETED))
-                .thenReturn(Optional.empty());
-        when(orderService.bill("tok123")).thenReturn(bill());
-        when(orders.findBySessionIdOrderByPlacedAtAsc(sessionId)).thenReturn(List.of(served));
-        when(payments.findFirstBySessionIdAndStatusOrderByCreatedAtDesc(sessionId, PaymentStatus.PENDING))
-                .thenReturn(Optional.empty());
         when(payments.save(any())).thenAnswer(inv -> {
             Payment p = inv.getArgument(0);
             if (p.getId() == null) p.setId(UUID.randomUUID());
             return p;
         });
-        when(sessions.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        // No stub for findBySessionIdOrderByCreatedAtDesc → Mockito default empty list = paid 0.
+        PaymentResponse res = service.confirmMock("tok123", "MOCK_UPI");
+
+        assertThat(res.getStatus()).isEqualTo("COMPLETED");
+        assertThat(res.getTotal()).isEqualByComparingTo("572.70");
+        assertThat(res.getPaymentStatus()).isEqualTo("PAID");
+        assertThat(session.getStatus()).isEqualTo("ACTIVE");
+    }
+
+    @Test
+    void happyMockPayLeavesSessionOpenForWaiterClose() {
+        Order served = order(OrderStatus.SERVED);
+        when(sessions.findBySessionToken("tok123")).thenReturn(Optional.of(session));
+        when(orderService.bill("tok123")).thenReturn(bill());
+        when(payments.save(any())).thenAnswer(inv -> {
+            Payment p = inv.getArgument(0);
+            if (p.getId() == null) p.setId(UUID.randomUUID());
+            return p;
+        });
 
         PaymentResponse res = service.confirmMock("tok123", "MOCK_UPI");
 
         assertThat(res.getStatus()).isEqualTo("COMPLETED");
         assertThat(res.getTotal()).isEqualByComparingTo("572.70");
-        assertThat(session.getStatus()).isEqualTo("CLOSED");
-        assertThat(session.getClosedBy()).isNull();
-        assertThat(served.getStatus()).isEqualTo(OrderStatus.COMPLETED);
-        assertThat(served.getCompletedAt()).isNotNull();
+        // Payment never closes: waiter closes, served rows untouched.
+        assertThat(session.getStatus()).isEqualTo("ACTIVE");
+        assertThat(served.getStatus()).isEqualTo(OrderStatus.SERVED);
         ArgumentCaptor<Payment> cap = ArgumentCaptor.forClass(Payment.class);
         verify(payments).save(cap.capture());
         assertThat(cap.getValue().getGatewayRef()).startsWith("mock-");
+    }
+
+    @Test
+    void partialTopUpThenBalanceDueShrinks() {
+        when(sessions.findBySessionToken("tok123")).thenReturn(Optional.of(session));
+        when(orderService.bill("tok123")).thenReturn(bill());
+        ArgumentCaptor<Payment> cap = ArgumentCaptor.forClass(Payment.class);
+        when(payments.save(cap.capture())).thenAnswer(inv -> {
+            Payment p = inv.getArgument(0);
+            if (p.getId() == null) p.setId(UUID.randomUUID());
+            return p;
+        });
+
+        PaymentResponse res = service.confirmMock("tok123", "MOCK_UPI",
+                new BigDecimal("100.00"), "Saurabh", "9876543210");
+
+        assertThat(res.getStatus()).isEqualTo("COMPLETED");
+        assertThat(res.getTotal()).isEqualByComparingTo("100.00");
+        assertThat(res.getPaidTotal()).isEqualByComparingTo("100.00");
+        assertThat(res.getBalanceDue()).isEqualByComparingTo("472.70");
+        assertThat(res.getPaymentStatus()).isEqualTo("PARTIAL");
+        assertThat(cap.getValue().getCustomerName()).isEqualTo("Saurabh");
+        assertThat(cap.getValue().getCustomerPhone()).isEqualTo("9876543210");
+        assertThat(session.getStatus()).isEqualTo("ACTIVE");
+    }
+
+    @Test
+    void overpayBeyondBalanceIsRejected() {
+        when(sessions.findBySessionToken("tok123")).thenReturn(Optional.of(session));
+        when(orderService.bill("tok123")).thenReturn(bill());
+
+        assertThatThrownBy(() -> service.confirmMock("tok123", "MOCK_UPI",
+                        new BigDecimal("999.00"), null, null))
+                .isInstanceOf(ResponseStatusException.class)
+                .extracting(ex -> ((ResponseStatusException) ex).getStatusCode())
+                .isEqualTo(HttpStatus.BAD_REQUEST);
+        verify(payments, never()).save(any());
     }
 
     @Test
@@ -170,23 +201,23 @@ class PaymentServiceTest {
                 .totalAmount(new BigDecimal("572.70")).paymentMethod(PaymentMethod.MOCK_UPI)
                 .status(PaymentStatus.COMPLETED).gatewayRef("mock-abc").build();
         when(sessions.findBySessionToken("tok123")).thenReturn(Optional.of(session));
+        when(orderService.bill("tok123")).thenReturn(bill());
+        when(payments.findBySessionIdOrderByCreatedAtDesc(sessionId)).thenReturn(List.of(existing));
         when(payments.findFirstBySessionIdAndStatusOrderByCreatedAtDesc(sessionId, PaymentStatus.COMPLETED))
                 .thenReturn(Optional.of(existing));
 
         PaymentResponse res = service.confirmMock("tok123", "MOCK_UPI");
 
         assertThat(res.getId()).isEqualTo(existing.getId());
+        assertThat(res.getPaymentStatus()).isEqualTo("PAID");
         verify(payments, never()).save(any());
     }
 
     @Test
-    void payAtCounterLeavesActiveAndStaffCompleteCloses() {
+    void payAtCounterLeavesActiveAndStaffCollectKeepsOpen() {
         Order served = order(OrderStatus.SERVED);
         when(sessions.findBySessionToken("tok123")).thenReturn(Optional.of(session));
-        when(payments.findFirstBySessionIdAndStatusOrderByCreatedAtDesc(sessionId, PaymentStatus.COMPLETED))
-                .thenReturn(Optional.empty());
         when(orderService.bill("tok123")).thenReturn(bill());
-        when(orders.findBySessionIdOrderByPlacedAtAsc(sessionId)).thenReturn(List.of(served));
         when(payments.findFirstBySessionIdAndStatusOrderByCreatedAtDesc(sessionId, PaymentStatus.PENDING))
                 .thenReturn(Optional.empty());
         when(payments.save(any())).thenAnswer(inv -> {
@@ -198,9 +229,10 @@ class PaymentServiceTest {
         PaymentResponse pending = service.payAtCounter("tok123");
 
         assertThat(pending.getStatus()).isEqualTo("PENDING");
+        assertThat(pending.getTotal()).isEqualByComparingTo("572.70");
         assertThat(session.getStatus()).isEqualTo("ACTIVE");
 
-        // Staff completes cash.
+        // Staff collects cash — session STAYS open, waiter closes separately.
         UUID waiterId = UUID.randomUUID();
         User waiter = User.builder().id(waiterId).tenant(tenant).email("w@x.in").fullName("Waiter").build();
         TenantContext.set(tenantId);
@@ -213,35 +245,27 @@ class PaymentServiceTest {
                 .serviceCharge(bill().getServiceCharge()).totalAmount(bill().getTotalAmount())
                 .paymentMethod(PaymentMethod.CASH).status(PaymentStatus.PENDING).build();
         when(payments.findById(pending.getId())).thenReturn(Optional.of(cashPending));
-        when(users.findById(waiterId)).thenReturn(Optional.of(waiter));
-        when(sessions.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
         PaymentResponse done = service.completeCash(pending.getId());
 
         assertThat(done.getStatus()).isEqualTo("COMPLETED");
-        assertThat(session.getStatus()).isEqualTo("CLOSED");
-        assertThat(session.getClosedBy()).isEqualTo(waiter);
-        assertThat(served.getStatus()).isEqualTo(OrderStatus.COMPLETED);
+        assertThat(done.getPaymentStatus()).isEqualTo("PAID");
+        assertThat(session.getStatus()).isEqualTo("ACTIVE");
+        assertThat(served.getStatus()).isEqualTo(OrderStatus.SERVED);
     }
 
     @Test
     void tamperedTotalIgnoredServiceRecomputesFromBill() {
         Order served = order(OrderStatus.SERVED);
         when(sessions.findBySessionToken("tok123")).thenReturn(Optional.of(session));
-        when(payments.findFirstBySessionIdAndStatusOrderByCreatedAtDesc(sessionId, PaymentStatus.COMPLETED))
-                .thenReturn(Optional.empty());
         // Bill is the single source of truth — client cannot supply a total.
         when(orderService.bill("tok123")).thenReturn(bill());
-        when(orders.findBySessionIdOrderByPlacedAtAsc(sessionId)).thenReturn(List.of(served));
-        when(payments.findFirstBySessionIdAndStatusOrderByCreatedAtDesc(sessionId, PaymentStatus.PENDING))
-                .thenReturn(Optional.empty());
         ArgumentCaptor<Payment> cap = ArgumentCaptor.forClass(Payment.class);
         when(payments.save(cap.capture())).thenAnswer(inv -> {
             Payment p = inv.getArgument(0);
             if (p.getId() == null) p.setId(UUID.randomUUID());
             return p;
         });
-        when(sessions.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
         PaymentResponse res = service.confirmMock("tok123", "MOCK_CARD");
 

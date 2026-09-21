@@ -22,6 +22,8 @@ public class OrderViews {
         private String status;
         private Instant startedAt;
         private String closedBy;
+        /** First name of the table's assigned waiter; null when unassigned (House). */
+        private String waiterName;
     }
 
     @Data
@@ -78,5 +80,10 @@ public class OrderViews {
         private BigDecimal taxAmount;
         private BigDecimal serviceCharge;
         private BigDecimal totalAmount;
+        /** Pay-anytime fields: SUM(COMPLETED payments) vs bill total. */
+        private BigDecimal paidTotal;
+        private BigDecimal balanceDue;
+        /** UNPAID (nothing paid yet), PARTIAL, or PAID. */
+        private String paymentStatus;
     }
 }

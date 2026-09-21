@@ -65,6 +65,8 @@ class OrderUpdateStatusTest {
     private UserRepository users;
     @Mock
     private TenantGuard guard;
+    @Mock
+    private com.tablepulse.payment.PaymentRepository payments;
 
     private OrderService service;
     private UUID tenantId;
@@ -74,7 +76,7 @@ class OrderUpdateStatusTest {
     @BeforeEach
     void setUp() {
         service = new OrderService(sessions, orders, orderItems, itemModifiers, counters,
-                tables, branches, menuItems, modifierGroups, modifierOptions, users, guard);
+                tables, branches, menuItems, modifierGroups, modifierOptions, users, guard, payments);
         tenantId = UUID.randomUUID();
         TenantContext.set(tenantId);
         Branch branch = Branch.builder().id(UUID.randomUUID()).name("Main").build();

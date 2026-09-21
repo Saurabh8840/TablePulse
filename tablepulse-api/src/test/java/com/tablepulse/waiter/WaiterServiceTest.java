@@ -7,10 +7,14 @@ import com.tablepulse.auth.UserRepository;
 import com.tablepulse.common.security.TenantGuard;
 import com.tablepulse.order.Order;
 import com.tablepulse.order.OrderRepository;
+import com.tablepulse.order.OrderService;
 import com.tablepulse.order.OrderStatus;
 import com.tablepulse.order.TableSession;
 import com.tablepulse.order.TableSessionRepository;
+import com.tablepulse.order.dto.OrderViews.BillLine;
+import com.tablepulse.order.dto.OrderViews.BillResponse;
 import com.tablepulse.order.dto.OrderViews.SessionResponse;
+import com.tablepulse.payment.PaymentRepository;
 import com.tablepulse.restaurant.Branch;
 import com.tablepulse.restaurant.Restaurant;
 import com.tablepulse.table.RestaurantTable;
@@ -54,6 +58,10 @@ class WaiterServiceTest {
     private UserRepository users;
     @Mock
     private TenantGuard guard;
+    @Mock
+    private OrderService orderService;
+    @Mock
+    private PaymentRepository payments;
 
     private WaiterService service;
     private UUID sessionId;
@@ -64,7 +72,7 @@ class WaiterServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new WaiterService(tables, sessions, orders, users, guard);
+        service = new WaiterService(tables, sessions, orders, users, guard, orderService, payments);
         UUID tenantId = UUID.randomUUID();
         TenantContext.set(tenantId);
         Tenant tenant = Tenant.builder().id(tenantId).name("T").slug("t").build();
@@ -106,6 +114,7 @@ class WaiterServiceTest {
         Order served = order(OrderStatus.SERVED);
         when(orders.findBySessionIdOrderByPlacedAtAsc(sessionId)).thenReturn(List.of(served));
         when(orders.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(orderService.bill("tok")).thenReturn(paidBill());
 
         SessionResponse res = service.closeSession(sessionId);
 
@@ -124,5 +133,69 @@ class WaiterServiceTest {
                 .isInstanceOf(ResponseStatusException.class)
                 .extracting(ex -> ((ResponseStatusException) ex).getStatusCode())
                 .isEqualTo(HttpStatus.BAD_REQUEST);
+    }
+
+    @Test
+    void closeBlockedWhenBillUnpaid() {
+        when(orders.findBySessionIdOrderByPlacedAtAsc(sessionId)).thenReturn(List.of());
+        when(orderService.bill("tok")).thenReturn(unpaidBill());
+
+        assertThatThrownBy(() -> service.closeSession(sessionId))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("Collect");
+        assertThat(session.getStatus()).isEqualTo("ACTIVE");
+    }
+
+    @Test
+    void waiterCannotForceCloseUnpaidButManagerCan() {        when(orders.findBySessionIdOrderByPlacedAtAsc(sessionId)).thenReturn(List.of());
+        when(orderService.bill("tok")).thenReturn(unpaidBill());
+
+        // Waiter force attempt → 403.
+        assertThatThrownBy(() -> service.closeSession(sessionId, true))
+                .isInstanceOf(ResponseStatusException.class)
+                .extracting(ex -> ((ResponseStatusException) ex).getStatusCode())
+                .isEqualTo(HttpStatus.FORBIDDEN);
+
+        // Manager force attempt → closes.
+        SecurityContextHolder.getContext().setAuthentication(
+                new UsernamePasswordAuthenticationToken(waiterId.toString(), null,
+                        List.of(new SimpleGrantedAuthority("ROLE_MANAGER"))));
+        SessionResponse res = service.closeSession(sessionId, true);
+        assertThat(res.getStatus()).isEqualTo("CLOSED");
+    }
+
+    @Test
+    void closeExposesAssignedWaiterFirstNameOnly() {
+        table.setAssignedWaiter(User.builder().id(UUID.randomUUID()).fullName("Sonu Sharma").build());
+        when(orders.findBySessionIdOrderByPlacedAtAsc(sessionId)).thenReturn(List.of());
+        when(orderService.bill("tok")).thenReturn(paidBill());
+
+        SessionResponse res = service.closeSession(sessionId);
+
+        assertThat(res.getWaiterName()).isEqualTo("Sonu");
+    }
+
+    @Test
+    void closeHidesWaiterNameWhenUnassigned() {
+        when(orders.findBySessionIdOrderByPlacedAtAsc(sessionId)).thenReturn(List.of());
+        when(orderService.bill("tok")).thenReturn(paidBill());
+
+        SessionResponse res = service.closeSession(sessionId);
+
+        assertThat(res.getWaiterName()).isNull();
+    }
+
+    private BillResponse paidBill() {
+        return new BillResponse("T10", List.of(), java.math.BigDecimal.ZERO, java.math.BigDecimal.ZERO,
+                java.math.BigDecimal.ZERO, java.math.BigDecimal.ZERO,
+                java.math.BigDecimal.ZERO, java.math.BigDecimal.ZERO, "PAID");
+    }
+
+    private BillResponse unpaidBill() {
+        return new BillResponse("T10",
+                List.of(new BillLine("ORD-1", "1 item", new java.math.BigDecimal("249.00"))),
+                new java.math.BigDecimal("249.00"), java.math.BigDecimal.ZERO, java.math.BigDecimal.ZERO,
+                new java.math.BigDecimal("249.00"),
+                java.math.BigDecimal.ZERO, new java.math.BigDecimal("249.00"), "UNPAID");
     }
 }
