@@ -40,4 +40,19 @@ public class OrderRepositoryImpl implements OrderRepositoryCustom {
         cq.orderBy(cb.desc(o.get("placedAt")));
         return em.createQuery(cq).getResultList();
     }
+
+    @Override
+    public List<Order> findLive(UUID tenantId, UUID branchId) {
+        CriteriaBuilder cb = em.getCriteriaBuilder();
+        CriteriaQuery<Order> cq = cb.createQuery(Order.class);
+        Root<Order> o = cq.from(Order.class);
+        cq.where(
+                cb.equal(o.get("tenant").get("id"), tenantId),
+                cb.equal(o.get("branch").get("id"), branchId),
+                o.get("status").in(OrderStatus.PLACED, OrderStatus.ACCEPTED,
+                        OrderStatus.PREPARING, OrderStatus.READY));
+        // Oldest first — kitchen works the longest-waiting ticket first.
+        cq.orderBy(cb.asc(o.get("placedAt")));
+        return em.createQuery(cq).getResultList();
+    }
 }

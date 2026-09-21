@@ -30,8 +30,9 @@ public class OrderController {
     public ApiResponse<List<OrderResponse>> search(
             @RequestParam(required = false) UUID branchId,
             @RequestParam(required = false) String status,
-            @RequestParam(required = false) String date) {
-        return ApiResponse.ok("Orders fetched", service.searchOrders(branchId, status, date));
+            @RequestParam(required = false) String date,
+            @RequestParam(required = false, defaultValue = "false") boolean liveOnly) {
+        return ApiResponse.ok("Orders fetched", service.searchOrders(branchId, status, date, liveOnly));
     }
 
     @GetMapping("/orders/{id}")
