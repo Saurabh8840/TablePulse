@@ -11,7 +11,8 @@ import {
   CardContent,
   Chip,
   CircularProgress,
-  Drawer,
+  Dialog,
+  DialogContent,
   FormControl,
   InputLabel,
   MenuItem,
@@ -21,6 +22,7 @@ import {
   ToggleButtonGroup,
   Typography,
 } from '@mui/material';
+import { alpha } from '@mui/material/styles';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import PageHeader from '../../components/layout/PageHeader.jsx';
 import { useAuth } from '../../hooks/useAuth.js';
@@ -33,12 +35,21 @@ const BRANCH_KEY = 'tp_waiter_branch';
 const POLL_MS = 5000;
 
 const STATUS_META = {
-  EMPTY: { label: 'Empty', emoji: '🟢', color: 'success' },
-  OCCUPIED: { label: 'Seated', emoji: '🪑', color: 'default' },
-  ORDERED: { label: 'Ordered', emoji: '🟡', color: 'warning' },
-  PREPARING: { label: 'Preparing', emoji: '🔥', color: 'info' },
-  READY: { label: 'READY!', emoji: '🔴', color: 'error' },
+  EMPTY: { label: 'Empty', color: 'success' },
+  OCCUPIED: { label: 'Seated', color: 'neutral' },
+  ORDERED: { label: 'Ordered', color: 'warning' },
+  PREPARING: { label: 'Preparing', color: 'info' },
+  READY: { label: 'Ready to serve', color: 'error' },
 };
+
+/** Theme-safe status tint: soft wash band + strong ink dot. Works in light + dark. */
+function statusBand(theme, color) {
+  if (color === 'neutral') {
+    return { bg: theme.palette.action.hover, ink: theme.palette.text.secondary, dot: theme.palette.text.disabled };
+  }
+  const main = theme.palette[color]?.main ?? theme.palette.primary.main;
+  return { bg: alpha(main, 0.12), ink: main, dot: main };
+}
 
 function elapsed(placedAt) {
   const ms = Date.now() - new Date(placedAt).getTime();
@@ -91,15 +102,15 @@ export default function WaiterDashboard() {
   const [sound, setSound] = useState(true);
   const [selected, setSelected] = useState(null);
   const [tick, setTick] = useState(0);
-  // Ownership: waiters default to their floor (mine + house), managers see all.
-  const [mineOnly, setMineOnly] = useState(true);
+  // Ownership: full floor by default (all tables + all orders visible);
+  // waiters can narrow to their tables with the toggle.
+  const [mineOnly, setMineOnly] = useState(false);
   const roleInit = useRef(false);
   const knownReady = useRef(new Set());
 
   useEffect(() => {
     if (user && !roleInit.current) {
       roleInit.current = true;
-      if (user.role !== 'WAITER') setMineOnly(false);
     }
     // Fix 2: branch-scoped staff are locked to their home branch —
     // a Bangalore waiter can never open the Noida floor.
@@ -229,15 +240,20 @@ export default function WaiterDashboard() {
     }
   }
 
-  async function handleClose(table) {
+  async function handleClose(table, force = false) {
     if (!table.sessionId) return;
     if (isCover(table) && !window.confirm(
       `Table ${table.tableNumber} is ${table.assignedWaiterName}'s — close anyway? It'll be recorded as your cover.`)) {
       return;
     }
+    const due = Number(table.balanceDue ?? 0);
+    if (force && due > 0 && !window.confirm(
+      `Table ${table.tableNumber} still owes ₹${due.toFixed(2)} — force-close anyway?`)) {
+      return;
+    }
     setClosing(true);
     try {
-      await closeSession(table.sessionId);
+      await closeSession(table.sessionId, force);
       setSelected(null);
       await load();
     } catch (e) {
@@ -261,7 +277,7 @@ export default function WaiterDashboard() {
 
   function ownerTag(table) {
     if (!table) return '';
-    if (!table.assignedWaiterId) return '🏠 House';
+    if (!table.assignedWaiterId) return 'House';
     if (user && table.assignedWaiterId === user.userId) return '· Mine';
     return `· ${table.assignedWaiterName ?? 'assigned'}`;
   }
@@ -313,7 +329,7 @@ export default function WaiterDashboard() {
   return (
     <Box>
       <PageHeader
-        title="👤 Waiter Dashboard"
+        title="Waiter Dashboard"
         subtitle={
           branchId
             ? `${visibleTables.length}/${tables.length} tables · ${needsAttention} need attention · auto-refresh every 5s`
@@ -410,31 +426,43 @@ export default function WaiterDashboard() {
             </Typography>
           </Box>
           {visibleReady.length > 0 && (
-            <Box sx={{ mb: 2 }}>
-              <Typography variant="subtitle1" fontWeight={800} sx={{ mb: 1 }}>
-                🔔 Ready to serve ({visibleReady.length})
+            <Box sx={{ mb: 2.5 }}>
+              <Typography variant="subtitle1" fontWeight={800} sx={{ mb: 1, letterSpacing: '-0.01em' }}>
+                Ready to serve ({visibleReady.length})
               </Typography>
               <Box sx={{ display: 'grid', gap: 1 }}>
                 {visibleReady.map((o) => {
                   const t = tables.find((x) => x.tableNumber === o.tableNumber);
                   return (
-                    <Alert
+                    <Paper
                       key={o.id}
-                      severity="warning"
-                      action={
-                        <Button
-                          size="small"
-                          variant="contained"
-                          disabled={actingId === o.id}
-                          onClick={() => handleServe(o)}
-                        >
-                          {actingId === o.id ? '…' : 'Mark Served ✓'}
-                        </Button>
-                      }
+                      variant="outlined"
+                      sx={{
+                        p: 1.75, borderRadius: 3, display: 'flex', gap: 2, alignItems: 'center',
+                        borderLeft: 4, borderLeftColor: 'error.main',
+                      }}
                     >
-                      ⚡ Table {o.tableNumber}{t ? ` ${ownerTag(t)}` : ''} — Order {o.orderNumber} is READY ({elapsed(o.placedAt)}):{' '}
-                      {orderSummary(o)}
-                    </Alert>
+                      <Box sx={{ flexGrow: 1, minWidth: 0 }}>
+                        <Typography variant="subtitle1" fontWeight={800} sx={{ letterSpacing: '-0.01em' }}>
+                          Table {o.tableNumber}
+                          <Typography component="span" variant="body2" color="text.secondary" fontWeight={400}>
+                            {t ? ` ${ownerTag(t)}` : ''} · {o.orderNumber} · {elapsed(o.placedAt)}
+                          </Typography>
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary" noWrap>
+                          {orderSummary(o)}
+                        </Typography>
+                      </Box>
+                      <Button
+                        size="small"
+                        variant="contained"
+                        disabled={actingId === o.id}
+                        onClick={() => handleServe(o)}
+                        sx={{ flexShrink: 0 }}
+                      >
+                        {actingId === o.id ? '…' : 'Mark Served'}
+                      </Button>
+                    </Paper>
                   );
                 })}
               </Box>
@@ -444,47 +472,113 @@ export default function WaiterDashboard() {
           <Box
             sx={{
               display: 'grid',
-              gap: 1.5,
-              gridTemplateColumns: { xs: '1fr 1fr', sm: '1fr 1fr 1fr', md: '1fr 1fr 1fr 1fr' },
+              gap: '10px',
+              gridTemplateColumns: {
+                xs: '1fr 1fr 1fr',
+                sm: '1fr 1fr 1fr 1fr',
+                md: '1fr 1fr 1fr 1fr 1fr',
+                lg: '1fr 1fr 1fr 1fr 1fr 1fr',
+              },
             }}
           >
             {visibleTables.map((t) => {
               const meta = STATUS_META[t.displayStatus] ?? STATUS_META.EMPTY;
               const mine = !!user && !!t.assignedWaiterId && t.assignedWaiterId === user.userId;
+              const isReady = t.displayStatus === 'READY';
               return (
                 <Card
                   key={t.tableId}
                   variant="outlined"
                   sx={{
-                    borderRadius: 3,
-                    borderLeft: 4,
-                    borderLeftColor: `${meta.color}.main`,
-                    ...(t.displayStatus === 'READY' && { bgcolor: 'warning.light' }),
+                    // Literal px radius — numeric values multiply theme.shape (16) and go oval.
+                    borderRadius: '14px',
+                    overflow: 'hidden',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    minHeight: 112,
+                    transition: 'box-shadow .15s',
+                    '&:hover': { boxShadow: 2 },
+                    ...(isReady && {
+                      animation: 'wpulse 2s ease-in-out infinite',
+                      '@keyframes wpulse': {
+                        '0%, 100%': { boxShadow: '0 0 0 0 rgba(0,0,0,0)' },
+                        '50%': { boxShadow: '0 6px 18px -8px rgba(198,40,40,0.5)' },
+                      },
+                    }),
                   }}
                 >
-                  <CardActionArea onClick={() => setSelected(t)}>
-                    <CardContent sx={{ p: 1.5, '&:last-child': { pb: 1.5 } }}>
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                        <Typography variant="h6" fontWeight={800}>
-                          {t.tableNumber}
-                        </Typography>
-                        <Box sx={{ flexGrow: 1 }} />
-                        <Chip size="small" label={`${meta.emoji} ${meta.label}`} color={meta.color} />
+                  <CardActionArea
+                    onClick={() => setSelected(t)}
+                    sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column', alignItems: 'stretch', textAlign: 'left' }}
+                  >
+                    {/* Slim status band */}
+                    <Box
+                      sx={(theme) => {
+                        const s = statusBand(theme, meta.color);
+                        return {
+                          px: 1.5, py: 0.5, bgcolor: s.bg,
+                          display: 'flex', alignItems: 'center', gap: 0.75,
+                        };
+                      }}
+                    >
+                      <Box
+                        sx={(theme) => ({
+                          width: 7, height: 7, borderRadius: '50%', flexShrink: 0,
+                          bgcolor: statusBand(theme, meta.color).dot,
+                        })}
+                      />
+                      <Typography
+                        variant="caption"
+                        fontWeight={800}
+                        noWrap
+                        sx={(theme) => ({
+                          color: statusBand(theme, meta.color).ink,
+                          textTransform: 'uppercase', letterSpacing: '0.07em', fontSize: 10,
+                        })}
+                      >
+                        {meta.label}
+                        {t.readyOrderCount > 0 && ` · ${t.readyOrderCount}`}
+                      </Typography>
+                    </Box>
+                    <CardContent sx={{ px: 1.5, py: 1, flexGrow: 1, '&:last-child': { pb: 1 } }}>
+                      <Typography variant="h5" fontWeight={800} sx={{ letterSpacing: '-0.01em', lineHeight: 1.15, fontSize: 20 }}>
+                        {t.tableNumber}
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.25, fontSize: 12 }} noWrap>
+                        {t.seatingCapacity} seats · {mine ? 'My table' : ownerTag(t)}
+                      </Typography>
+                      <Box sx={{ mt: 0.25, display: 'grid', minHeight: 32 }}>
+                        {t.activeOrderCount > 0 ? (
+                          <Typography variant="caption" color="text.secondary" sx={{ fontSize: 12 }} noWrap>
+                            {t.activeOrderCount} live · oldest {elapsed(t.oldestPlacedAt)}
+                          </Typography>
+                        ) : (
+                          <Typography variant="caption" color="text.secondary" sx={{ fontSize: 12 }} noWrap>
+                            {t.sessionId ? 'Seated · no live orders' : 'No active session'}
+                          </Typography>
+                        )}
+                        {t.sessionId && t.paymentStatus && (
+                          <Typography
+                            variant="caption"
+                            fontWeight={700}
+                            noWrap
+                            color={
+                              t.paymentStatus === 'PAID'
+                                ? 'success.main'
+                                : t.paymentStatus === 'PARTIAL'
+                                  ? 'warning.main'
+                                  : 'text.secondary'
+                            }
+                            sx={{ fontVariantNumeric: 'tabular-nums', fontSize: 12 }}
+                          >
+                            {t.paymentStatus === 'PAID'
+                              ? `Paid${t.pendingCash ? ' · cash?' : ''}`
+                              : t.paymentStatus === 'PARTIAL'
+                                ? `Due ₹${Number(t.balanceDue ?? 0).toFixed(2)}${t.pendingCash ? ' · cash?' : ''}`
+                                : `Unpaid${t.pendingCash ? ' · cash?' : ''}`}
+                          </Typography>
+                        )}
                       </Box>
-                      <Typography variant="caption" color="text.secondary">
-                        {t.seatingCapacity} seats
-                        {t.activeOrderCount > 0 &&
-                          ` · ${t.activeOrderCount} live order${t.activeOrderCount === 1 ? '' : 's'}`}
-                        {t.readyOrderCount > 0 && ` · ${t.readyOrderCount} ready`}
-                      </Typography>
-                      <Typography variant="caption" color={mine ? 'primary.main' : 'text.secondary'} fontWeight={mine ? 800 : 400}>
-                        {mine ? '★ My table' : ownerTag(t)}
-                      </Typography>
-                      {t.oldestPlacedAt && (
-                        <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
-                          ⏱ oldest {elapsed(t.oldestPlacedAt)}
-                        </Typography>
-                      )}
                     </CardContent>
                   </CardActionArea>
                 </Card>
@@ -504,19 +598,81 @@ export default function WaiterDashboard() {
         </>
       )}
 
-      <Drawer anchor="right" open={!!selected} onClose={() => setSelected(null)}>
-        <Box sx={{ width: { xs: 320, sm: 380 }, p: 2.5 }}>
+      <Dialog
+        open={!!selected}
+        onClose={() => setSelected(null)}
+        fullWidth
+        maxWidth="sm"
+        sx={{
+          '& .MuiDialog-container': {
+            alignItems: { xs: 'flex-end', sm: 'center' },
+          },
+          '& .MuiPaper-root': {
+            m: { xs: 0, sm: 2 },
+            width: { xs: '100%', sm: 'calc(100% - 32px)' },
+            maxHeight: { xs: '92vh', sm: 'calc(100% - 64px)' },
+            borderRadius: { xs: '20px 20px 0 0', sm: '20px' },
+          },
+        }}
+      >
+        <DialogContent sx={{ p: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        <Box sx={{ display: 'flex', flexDirection: 'column', maxHeight: 'calc(100vh - 64px)' }}>
           {drawerTable && (
             <>
-              <Typography variant="h6" fontWeight={800}>
-                Table {drawerTable.tableNumber}
-              </Typography>
-              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                {STATUS_META[drawerTable.displayStatus]?.label} · {drawerTable.seatingCapacity} seats
-                {drawerTable.oldestPlacedAt && ` · oldest ${elapsed(drawerTable.oldestPlacedAt)}`}
-                <br />
-                Owner: {drawerTable.assignedWaiterName ?? '🏠 House (any waiter)'}
-              </Typography>
+              {/* Sticky header — never clips, never scrolls away */}
+              <Box sx={{ p: 2.5, pb: 1.5, bgcolor: 'background.paper', zIndex: 1, borderBottom: 1, borderColor: 'divider' }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
+                  <Typography variant="h5" fontWeight={800} sx={{ flexGrow: 1, letterSpacing: '-0.02em' }}>
+                    Table {drawerTable.tableNumber}
+                  </Typography>
+                  <Chip
+                    size="small"
+                    label={STATUS_META[drawerTable.displayStatus]?.label ?? drawerTable.displayStatus}
+                    color={STATUS_META[drawerTable.displayStatus]?.color === 'neutral' ? 'default' : (STATUS_META[drawerTable.displayStatus]?.color ?? 'default')}
+                  />
+                </Box>
+                <Typography variant="body2" color="text.secondary">
+                  {drawerTable.seatingCapacity} seats
+                  {drawerTable.oldestPlacedAt && ` · oldest ${elapsed(drawerTable.oldestPlacedAt)}`}
+                  {' · '}Owner: {drawerTable.assignedWaiterName ?? 'House (any waiter)'}
+                </Typography>
+                {/* Payment band — always visible on an open table */}
+                {drawerTable.sessionId && drawerTable.paymentStatus && (
+                  <Paper
+                    variant="outlined"
+                    sx={{
+                      mt: 1.5, p: 1.5, borderRadius: 3, display: 'flex',
+                      alignItems: 'center', justifyContent: 'space-between',
+                      borderLeft: 4,
+                      borderLeftColor: drawerTable.paymentStatus === 'PAID' ? 'success.main' : 'warning.main',
+                    }}
+                  >
+                    <Box>
+                      <Typography variant="subtitle2" fontWeight={800}>
+                        {drawerTable.paymentStatus === 'PAID'
+                          ? 'Paid in full'
+                          : drawerTable.paymentStatus === 'PARTIAL'
+                            ? 'Partially paid'
+                            : 'Unpaid'}
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        {pendingCash
+                          ? 'Cash collection pending at the table'
+                          : drawerTable.paymentStatus === 'PAID'
+                            ? 'Bill settled — close when served'
+                            : 'Collect before closing'}
+                      </Typography>
+                    </Box>
+                    <Typography variant="h6" fontWeight={800} sx={{ fontVariantNumeric: 'tabular-nums' }}>
+                      {drawerTable.paymentStatus === 'PAID'
+                        ? `₹${Number(drawerTable.paidTotal ?? 0).toFixed(2)}`
+                        : `₹${Number(drawerTable.balanceDue ?? 0).toFixed(2)} due`}
+                    </Typography>
+                  </Paper>
+                )}
+              </Box>
+              {/* Scrollable orders zone — poll refreshes never move header/footer */}
+              <Box sx={{ flexGrow: 1, overflowY: 'auto', px: 2.5, py: 2 }}>
               {selectedOrders.length === 0 ? (
                 <Alert severity="info" sx={{ mb: 2 }}>
                   {drawerTable.sessionId
@@ -531,7 +687,7 @@ export default function WaiterDashboard() {
               {selectedOrders.length > 0 && (
                 <Box sx={{ display: 'grid', gap: 1.25, mb: 2 }}>
                   {selectedOrders.map((o) => (
-                    <Paper key={o.id} variant="outlined" sx={{ p: 1.5, borderRadius: 2.5 }}>
+                    <Paper key={o.id} variant="outlined" sx={{ p: 1.5, borderRadius: 3 }}>
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
                         <Typography variant="subtitle2" fontWeight={800}>
                           {o.orderNumber}
@@ -583,26 +739,48 @@ export default function WaiterDashboard() {
                   then mark it collected to close out.
                 </Alert>
               )}
-              <Button
-                fullWidth
-                variant="outlined"
-                startIcon={<RoomServiceIcon />}
-                disabled={!drawerTable.sessionId || closing || liveSelected.length > 0}
-                onClick={() => handleClose(drawerTable)}
-                title={
-                  !drawerTable.sessionId
-                    ? 'No active session'
-                    : liveSelected.length > 0
-                      ? 'Serve or cancel all live orders first'
-                      : 'End this table session'
-                }
-              >
-                {closing ? 'Closing…' : 'Close Table'}
-              </Button>
-              {liveSelected.length > 0 && (
-                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
-                  Close is enabled once all live orders are served or cancelled.
-                </Typography>
+              </Box>
+              {/* Sticky footer — actions always in reach */}
+              <Box sx={{ p: 2.5, pt: 1.5, borderTop: 1, borderColor: 'divider', bgcolor: 'background.paper' }}>
+              {(() => {
+                const due = Number(drawerTable.balanceDue ?? 0);
+                const blockedReason = !drawerTable.sessionId
+                  ? 'No active session on this table'
+                  : liveSelected.length > 0
+                    ? `Serve or cancel ${liveSelected.length} live order${liveSelected.length === 1 ? '' : 's'} first`
+                    : due > 0
+                      ? `Collect ₹${due.toFixed(2)} first`
+                      : null;
+                return (
+                  <>
+                    <Button
+                      fullWidth
+                      variant={blockedReason ? 'outlined' : 'contained'}
+                      startIcon={<RoomServiceIcon />}
+                      disabled={!drawerTable.sessionId || closing || !!blockedReason}
+                      onClick={() => handleClose(drawerTable)}
+                    >
+                      {closing ? 'Closing…' : 'Close Table'}
+                    </Button>
+                    {blockedReason && drawerTable.sessionId && (
+                      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1, textAlign: 'center' }}>
+                        {blockedReason}
+                      </Typography>
+                    )}
+                  </>
+                );
+              })()}
+              {user && user.role !== 'WAITER' && Number(drawerTable.balanceDue ?? 0) > 0 && liveSelected.length === 0 && (
+                <Button
+                  fullWidth
+                  variant="text"
+                  color="warning"
+                  sx={{ mt: 1 }}
+                  disabled={!drawerTable.sessionId || closing}
+                  onClick={() => handleClose(drawerTable, true)}
+                >
+                  Force-close unpaid (manager)
+                </Button>
               )}
               {pendingCash && (
                 <Button
@@ -618,10 +796,12 @@ export default function WaiterDashboard() {
                     : `Mark ₹${Number(pendingCash.total ?? 0).toFixed(2)} Cash Collected ✓`}
                 </Button>
               )}
+              </Box>
             </>
           )}
         </Box>
-      </Drawer>
+        </DialogContent>
+      </Dialog>
     </Box>
   );
 }

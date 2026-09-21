@@ -479,7 +479,19 @@ export default function MenuManager() {
         {visibleItems.map((i) => {
           const inactive = !(i.active ?? true);
           return (
-            <Card key={i.id} sx={{ opacity: !i.available || inactive ? 0.65 : 1, borderRadius: 3, overflow: 'hidden' }}>
+            <Card
+              key={i.id}
+              sx={{
+                opacity: !i.available || inactive ? 0.65 : 1,
+                borderRadius: 3, overflow: 'hidden',
+                transition: 'transform .18s ease, box-shadow .18s ease',
+                '&:hover': {
+                  boxShadow: 2,
+                  transform: { xs: 'none', sm: 'translateY(-2px)' },
+                  '& .admin-photo': { transform: 'scale(1.06)' },
+                },
+              }}
+            >
               <CardContent sx={{ display: 'flex', gap: 1.5, p: 1.5, '&:last-child': { pb: 1.5 } }}>
                 <Box sx={{ flexGrow: 1, minWidth: 0 }}>
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mb: 0.5 }}>
@@ -537,14 +549,19 @@ export default function MenuManager() {
                     Modifiers →
                   </Button>
                 </Box>
-                <Box sx={{ width: 112, flexShrink: 0 }}>
+                <Box
+                  sx={{ width: 112, flexShrink: 0, cursor: 'pointer' }}
+                  onClick={() => openEdit(i)}
+                  title={`Edit ${i.name}`}
+                >
                   <Box sx={{
                     width: 112, height: 92, borderRadius: 2.5, overflow: 'hidden',
                     bgcolor: 'action.hover', border: 1, borderColor: 'divider',
                   }}>
                     {i.imageUrl ? (
                       <Box component="img" src={i.imageUrl} alt={i.name} loading="lazy"
-                        sx={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                        className="admin-photo"
+                        sx={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', transition: 'transform .3s ease' }} />
                     ) : (
                       <Box sx={{
                         width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center',

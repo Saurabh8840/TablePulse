@@ -1,6 +1,8 @@
 import RefreshIcon from '@mui/icons-material/Refresh';
+import SearchIcon from '@mui/icons-material/Search';
 import VolumeUpIcon from '@mui/icons-material/VolumeUp';
 import VolumeOffIcon from '@mui/icons-material/VolumeOff';
+import { alpha } from '@mui/material/styles';
 import {
   Alert,
   Box,
@@ -11,10 +13,12 @@ import {
   CircularProgress,
   Collapse,
   FormControl,
+  InputAdornment,
   InputLabel,
   MenuItem,
   Paper,
   Select,
+  Skeleton,
   Switch,
   TextField,
   ToggleButton,
@@ -32,10 +36,23 @@ const BRANCH_KEY = 'tp_kds_branch';
 const POLL_MS = 7000;
 
 const COLUMNS = [
-  { key: 'NEW', title: '📥 New', statuses: ['PLACED'], color: 'warning' },
-  { key: 'PREP', title: '🔥 Preparing', statuses: ['ACCEPTED', 'PREPARING'], color: 'info' },
-  { key: 'READY', title: '✅ Ready', statuses: ['READY'], color: 'success' },
+  { key: 'NEW', title: 'New', statuses: ['PLACED'], color: 'warning' },
+  { key: 'PREP', title: 'Preparing', statuses: ['ACCEPTED', 'PREPARING'], color: 'info' },
+  { key: 'READY', title: 'Ready', statuses: ['READY'], color: 'success' },
 ];
+
+/** Urgency ramp shared by every live ticket: neutral <5m, amber 5–10m, red 10m+. */
+function urgency(mins) {
+  if (mins >= 10) return 'late';
+  if (mins >= 5) return 'warn';
+  return 'fresh';
+}
+
+const URGENCY = {
+  fresh: { label: null, color: 'text.secondary' },
+  warn: { label: 'Running long', color: 'warning.main' },
+  late: { label: 'Prioritize', color: 'error.main' },
+};
 
 const NEXT_ACTION = { PLACED: 'ACCEPTED', ACCEPTED: 'PREPARING', PREPARING: 'READY', READY: 'SERVED' };
 const ACTION_LABEL = { ACCEPTED: 'Accept', PREPARING: 'Preparing →', READY: 'Ready ✓', SERVED: 'Served ✓' };
@@ -75,64 +92,88 @@ function chime() {
   }
 }
 
-function OrderCard({ order, onAction, acting }) {
+function OrderCard({ order, onAction, acting, compact }) {
   const mins = elapsedMin(order.placedAt);
-  const urgent = order.status === 'PLACED' && mins >= 10;
+  const level = urgency(mins);
+  const meta = URGENCY[level];
   const action = NEXT_ACTION[order.status];
   return (
     <Card
       variant="outlined"
       sx={{
-        borderRadius: 3,
-        borderLeft: 4,
-        borderLeftColor: urgent ? 'error.main' : 'primary.main',
+        // Literal px radius — numeric values multiply theme.shape and go oval.
+        borderRadius: '14px',
+        overflow: 'hidden',
         opacity: acting ? 0.6 : 1,
+        ...(level !== 'fresh' && { borderLeft: 4, borderLeftColor: level === 'late' ? 'error.main' : 'warning.main' }),
       }}
     >
-      <CardContent sx={{ p: 1.5, '&:last-child': { pb: 1.5 } }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
-          <Typography variant="subtitle1" fontWeight={800}>
-            {order.orderNumber}
-          </Typography>
-          <Chip size="small" label={`Table ${order.tableNumber}`} color="primary" variant="outlined" />
-          <Box sx={{ flexGrow: 1 }} />
-          <Typography variant="caption" color={urgent ? 'error.main' : 'text.secondary'} fontWeight={urgent ? 800 : 400}>
-            ⏱ {elapsed(order.placedAt)}
+      {/* Urgency strip — amber at 5m, red at 10m, any live state */}
+      {meta.label && (
+        <Box sx={{ px: 1.5, py: 0.4, bgcolor: level === 'late' ? 'error.main' : 'warning.main', color: '#fff' }}>
+          <Typography variant="caption" fontWeight={800} sx={{ textTransform: 'uppercase', letterSpacing: '0.08em', fontSize: 10 }}>
+            {meta.label} · {elapsed(order.placedAt)}
           </Typography>
         </Box>
-        {urgent && <Alert severity="error" sx={{ mb: 1, py: 0 }}>Waiting 10+ min — prioritize!</Alert>}
-        <Box sx={{ display: 'grid', gap: 0.25, mb: 1 }}>
+      )}
+      <CardContent sx={{ p: compact ? 1 : 1.5, '&:last-child': { pb: compact ? 1 : 1.5 } }}>
+        <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 1, mb: compact ? 0.5 : 0.75 }}>
+          <Typography variant="h5" fontWeight={800} sx={{ letterSpacing: '-0.01em', lineHeight: 1, fontSize: compact ? 22 : 28 }}>
+            {order.tableNumber}
+          </Typography>
+          <Typography variant="body2" color="text.secondary" fontWeight={600}>
+            {order.orderNumber}
+          </Typography>
+          <Box sx={{ flexGrow: 1 }} />
+          <Typography
+            variant="body2"
+            fontWeight={700}
+            color={meta.color}
+            sx={{ fontVariantNumeric: 'tabular-nums' }}
+          >
+            {elapsed(order.placedAt)}
+          </Typography>
+        </Box>
+        <Box sx={{ display: 'grid', gap: compact ? 0.25 : 0.5, mb: 1 }}>
           {(order.items ?? []).map((it, idx) => (
             <Box key={idx}>
-              <Typography variant="body2" fontWeight={700}>
-                • {it.menuItemName} × {it.quantity}
-              </Typography>
+              <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 1 }}>
+                <Typography variant="body1" fontWeight={800} sx={{ fontVariantNumeric: 'tabular-nums', minWidth: 34 }}>
+                  ×{it.quantity}
+                </Typography>
+                <Typography variant="body2" fontWeight={700} sx={{ flexGrow: 1 }}>
+                  {it.menuItemName}
+                </Typography>
+              </Box>
               {(it.modifiers ?? []).length > 0 && (
-                <Typography variant="caption" color="primary.main" sx={{ ml: 2, display: 'block' }}>
+                <Typography variant="caption" color="primary.main" fontWeight={600} sx={{ ml: 5, display: 'block' }}>
                   {(it.modifiers ?? []).map((m) => m.modifierName).join(', ')}
                 </Typography>
               )}
               {it.specialInstructions && (
-                <Typography variant="caption" color="text.secondary" sx={{ ml: 2, display: 'block', fontStyle: 'italic' }}>
-                  “{it.specialInstructions}”
-                </Typography>
+                <Box sx={{ ml: 5, mt: 0.25, px: 1, py: 0.5, borderRadius: 1.5, bgcolor: (theme) => alpha(theme.palette.warning.main, 0.14), borderLeft: 3, borderColor: 'warning.main' }}>
+                  <Typography variant="caption" fontWeight={700}>
+                    “{it.specialInstructions}”
+                  </Typography>
+                </Box>
               )}
             </Box>
           ))}
         </Box>
         {order.specialInstructions && (
-          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
-            Note: “{order.specialInstructions}”
-          </Typography>
+          <Box sx={{ mb: 1, px: 1, py: 0.5, borderRadius: 1.5, bgcolor: (theme) => alpha(theme.palette.warning.main, 0.14), borderLeft: 3, borderColor: 'warning.main' }}>
+            <Typography variant="caption" fontWeight={700}>
+              Order note: “{order.specialInstructions}”
+            </Typography>
+          </Box>
         )}
         {action && (
           <Button
             fullWidth
-            size="small"
             variant={order.status === 'PLACED' ? 'contained' : 'outlined'}
             disabled={acting}
             onClick={() => onAction(order, action)}
-            sx={{ borderRadius: 2 }}
+            sx={{ borderRadius: 2.5, minHeight: compact ? 40 : 48, fontWeight: 800 }}
           >
             {acting ? 'Updating…' : ACTION_LABEL[action]}
           </Button>
@@ -154,6 +195,8 @@ export default function KitchenBoard() {
   const [actingId, setActingId] = useState(null);
   const [sound, setSound] = useState(true);
   const [mobileTab, setMobileTab] = useState('NEW');
+  const [ticketQuery, setTicketQuery] = useState('');
+  const [compact, setCompact] = useState(false);
   const [tick, setTick] = useState(0);
   // 86-board: kitchen-owned availability toggles (Phase 5b). Loaded lazily per restaurant.
   const [availOpen, setAvailOpen] = useState(false);
@@ -210,7 +253,8 @@ export default function KitchenBoard() {
       return;
     }
     try {
-      const res = await searchOrders({ branchId });
+      // Rush-hour poll: live tickets only (server filters + sorts oldest-first).
+      const res = await searchOrders({ branchId, liveOnly: true });
       const list = res.data ?? [];
       // Chime on genuinely new PLACED orders (not on first load).
       if (sound && knownIds.current.size > 0) {
@@ -293,21 +337,37 @@ export default function KitchenBoard() {
 
   const grouped = useMemo(() => {
     const map = { NEW: [], PREP: [], READY: [] };
+    const q = ticketQuery.trim().toLowerCase();
     for (const o of orders) {
+      // Rush search: table number or order number (e.g. "T12", "1042").
+      if (q && !`${o.tableNumber ?? ''} ${o.orderNumber ?? ''}`.toLowerCase().includes(q)) continue;
       if (o.status === 'PLACED') map.NEW.push(o);
       else if (o.status === 'ACCEPTED' || o.status === 'PREPARING') map.PREP.push(o);
       else if (o.status === 'READY') map.READY.push(o);
     }
+    // Oldest first within each column — longest-waiting ticket on top.
+    // (Server already sorts; this keeps it true after local filtering.)
+    for (const k of Object.keys(map)) {
+      map[k].sort((a, b) => new Date(a.placedAt) - new Date(b.placedAt));
+    }
     return map;
-  }, [orders, tick]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [orders, tick, ticketQuery]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const activeCount = orders.filter((o) => ['PLACED', 'ACCEPTED', 'PREPARING', 'READY'].includes(o.status)).length;
+  const oldestMs = orders.length > 0
+    ? Math.max(...orders.map((o) => Date.now() - new Date(o.placedAt).getTime()))
+    : 0;
+  const oldestLabel = orders.length > 0 ? elapsed(new Date(Date.now() - oldestMs).toISOString()) : null;
 
   return (
     <Box>
       <PageHeader
-        title="🔔 Kitchen Display"
-        subtitle={activeCount > 0 ? `${activeCount} live order${activeCount === 1 ? '' : 's'} · auto-refresh every 7s` : 'No live orders · auto-refresh every 7s'}
+        title="Kitchen Display"
+        subtitle={
+          activeCount > 0
+            ? `${activeCount} live order${activeCount === 1 ? '' : 's'}${oldestLabel ? ` · oldest ${oldestLabel}` : ''} · refreshes every 7s`
+            : 'No live orders · refreshes every 7s'
+        }
         actions={
           <Box sx={{ display: 'flex', gap: 1 }}>
             <Button
@@ -363,8 +423,8 @@ export default function KitchenBoard() {
       {branchId && (
         <Paper variant="outlined" sx={{ borderRadius: 3, mb: 2 }}>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1.5 }}>
-            <Typography variant="subtitle1" fontWeight={800} sx={{ flexGrow: 1 }}>
-              🔴 Menu availability (86-board)
+            <Typography variant="subtitle1" fontWeight={800} sx={{ flexGrow: 1, letterSpacing: '-0.01em' }}>
+              86-board · menu availability
             </Typography>
             {availItems !== null && (
               <Chip
@@ -421,10 +481,10 @@ export default function KitchenBoard() {
                         />
                         <Box sx={{ flexGrow: 1, minWidth: 0 }}>
                           <Typography variant="body2" fontWeight={700} noWrap>
-                            {!i.available && '🔴 '}{i.name}
+                            {i.name}
                           </Typography>
-                          <Typography variant="caption" color="text.secondary">
-                            {i.categoryName}
+                          <Typography variant="caption" color={!i.available ? 'warning.main' : 'text.secondary'} fontWeight={!i.available ? 700 : 400}>
+                            {!i.available && 'Sold out · '}{i.categoryName}
                             {i.lastChangedBy && ` · by ${i.lastChangedBy}`}
                           </Typography>
                         </Box>
@@ -445,12 +505,47 @@ export default function KitchenBoard() {
       {!branchId ? (
         <Alert severity="info">Pick a restaurant + branch to see its live orders. Log in as kitchen staff, manager or owner.</Alert>
       ) : loading && orders.length === 0 ? (
-        <Box sx={{ display: 'flex', justifyContent: 'center', py: 6 }}>
-          <CircularProgress />
+        <Box sx={{ display: 'grid', gap: 1.5, gridTemplateColumns: { xs: '1fr', md: '1fr 1fr 1fr' } }}>
+          {[0, 1, 2].map((i) => (
+            <Box key={i}>
+              <Skeleton variant="rounded" height={52} sx={{ mb: 1 }} />
+              <Skeleton variant="rounded" height={220} sx={{ mb: 1.25 }} />
+              <Skeleton variant="rounded" height={160} />
+            </Box>
+          ))}
         </Box>
       ) : (
         <>
           {/* Phone: tab switcher. Tablet/desktop: 3 columns side by side. */}
+          <Box sx={{ display: 'flex', gap: 1, mb: 1.5 }}>
+            <TextField
+              size="small"
+              fullWidth
+              placeholder="Search table or order — T12, 1042…"
+              value={ticketQuery}
+              onChange={(e) => setTicketQuery(e.target.value)}
+              InputProps={{
+                startAdornment: (
+                  <InputAdornment position="start">
+                    <SearchIcon fontSize="small" />
+                  </InputAdornment>
+                ),
+                sx: { borderRadius: 3, bgcolor: 'background.paper' },
+              }}
+              sx={{ flexGrow: 1 }}
+            />
+            <ToggleButtonGroup
+              size="small"
+              exclusive
+              value={compact ? 'COMPACT' : 'COMFY'}
+              onChange={(_, v) => v && setCompact(v === 'COMPACT')}
+              aria-label="ticket density"
+              sx={{ flexShrink: 0 }}
+            >
+              <ToggleButton value="COMFY">Comfy</ToggleButton>
+              <ToggleButton value="COMPACT">Compact</ToggleButton>
+            </ToggleButtonGroup>
+          </Box>
           <Box sx={{ display: { xs: 'block', md: 'none' }, mb: 1.5 }}>
             <ToggleButtonGroup
               fullWidth
@@ -482,28 +577,52 @@ export default function KitchenBoard() {
               >
                 <Paper
                   variant="outlined"
-                  sx={{ p: 1.25, borderRadius: 3, mb: 1, bgcolor: 'action.hover', display: 'flex', alignItems: 'center', gap: 1 }}
+                  sx={{
+                    p: 1.25, borderRadius: '14px', mb: 1,
+                    bgcolor: (theme) => alpha(theme.palette[col.color].main, 0.1),
+                    display: 'flex', alignItems: 'center', gap: 1,
+                  }}
                 >
-                  <Typography variant="subtitle1" fontWeight={800} sx={{ flexGrow: 1 }}>
+                  <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: `${col.color}.main`, flexShrink: 0 }} />
+                  <Typography
+                    variant="subtitle2"
+                    fontWeight={800}
+                    sx={{ flexGrow: 1, textTransform: 'uppercase', letterSpacing: '0.07em', fontSize: 12 }}
+                  >
                     {col.title}
                   </Typography>
-                  <Chip size="small" label={grouped[col.key].length} color={col.color} />
+                  {(() => {
+                    const list = grouped[col.key];
+                    const oldest = list.length > 0
+                      ? elapsed(list.reduce((a, b) => (new Date(a.placedAt) < new Date(b.placedAt) ? a : b)).placedAt)
+                      : null;
+                    return (
+                      <>
+                        {oldest && (
+                          <Typography variant="caption" color="text.secondary" sx={{ fontVariantNumeric: 'tabular-nums' }}>
+                            oldest {oldest}
+                          </Typography>
+                        )}
+                        <Chip size="small" label={list.length} color={col.color} />
+                      </>
+                    );
+                  })()}
                 </Paper>
                 <Box sx={{ display: 'grid', gap: 1.25 }}>
                   {grouped[col.key].length === 0 && (
-                    <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', py: 2 }}>
-                      Nothing here
+                    <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', py: 3 }}>
+                      All clear
                     </Typography>
                   )}
                   {grouped[col.key].map((o) => (
-                    <OrderCard key={o.id} order={o} onAction={handleAction} acting={actingId === o.id} />
+                    <OrderCard key={o.id} order={o} onAction={handleAction} acting={actingId === o.id} compact={compact} />
                   ))}
                 </Box>
               </Box>
             ))}
           </Box>
           <Typography variant="caption" color="text.secondary" sx={{ display: 'block', textAlign: 'center', mt: 2 }}>
-            Served / cancelled orders leave the board · customer phone updates on its 5s refresh (live sockets land later)
+            Board refreshes every 7s · served orders leave automatically
           </Typography>
         </>
       )}
