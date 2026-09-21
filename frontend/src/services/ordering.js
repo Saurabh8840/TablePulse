@@ -13,7 +13,16 @@ async function pub(path, { method = 'GET', body } = {}) {
   } catch {
     throw new Error(`Request failed: ${res.status}`);
   }
-  if (!res.ok) throw new Error(data?.error || data?.message || `Request failed: ${res.status}`);
+  if (!res.ok) {
+    const fields = data?.fields;
+    if (fields && typeof fields === 'object' && Object.keys(fields).length > 0) {
+      const detail = Object.entries(fields)
+        .map(([k, v]) => `${k} — ${v}`)
+        .join('; ');
+      throw new Error(`${data?.error ?? 'Validation failed'}: ${detail}`);
+    }
+    throw new Error(data?.error || data?.message || `Request failed: ${res.status}`);
+  }
   return data;
 }
 

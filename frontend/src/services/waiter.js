@@ -5,4 +5,5 @@ import { api } from './http.js';
 
 export const getTableStatus = (branchId) => api(`/api/branches/${branchId}/tables/status`);
 
-export const closeSession = (sessionId) => api(`/api/sessions/${sessionId}/close`, { method: 'POST' });
+export const closeSession = (sessionId, force = false) =>
+  api(`/api/sessions/${sessionId}/close${force ? '?force=true' : ''}`, { method: 'POST' });
