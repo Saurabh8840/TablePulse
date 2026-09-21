@@ -43,10 +43,11 @@ export const getPaymentStatus = (sessionToken) =>
   pub(`/api/public/payments/sessions/${encodeURIComponent(sessionToken)}/payment-status`);
 
 // Staff payment APIs — JWT required, tenant scoped.
-export const listPayments = ({ branchId, date } = {}) => {
+export const listPayments = ({ branchId, date, restaurantId } = {}) => {
   const q = new URLSearchParams();
   if (branchId) q.set('branchId', branchId);
   if (date) q.set('date', date);
+  if (restaurantId) q.set('restaurantId', restaurantId);
   const suffix = q.toString() ? `?${q.toString()}` : '';
   return api(`/api/payments${suffix}`);
 };

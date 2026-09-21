@@ -3,12 +3,13 @@ import { api } from './http.js';
 // Staff order APIs — JWT required, tenant scoped (Phase 3 OrderController).
 // Used by the Kitchen Display (Phase 4) with polling.
 
-export const searchOrders = ({ branchId, status, date, liveOnly } = {}) => {
+export const searchOrders = ({ branchId, status, date, liveOnly, restaurantId } = {}) => {
   const q = new URLSearchParams();
   if (branchId) q.set('branchId', branchId);
   if (status) q.set('status', status);
   if (date) q.set('date', date);
   if (liveOnly) q.set('liveOnly', 'true');
+  if (restaurantId) q.set('restaurantId', restaurantId);
   const suffix = q.toString() ? `?${q.toString()}` : '';
   return api(`/api/orders${suffix}`);
 };

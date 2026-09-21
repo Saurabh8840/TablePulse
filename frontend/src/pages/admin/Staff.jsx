@@ -19,6 +19,7 @@ import {
   Typography,
 } from '@mui/material';
 import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import EmptyState from '../../components/EmptyState.jsx';
 import PageHeader from '../../components/layout/PageHeader.jsx';
 import { listBranches, listRestaurants } from '../../services/restaurant.js';
@@ -182,6 +183,7 @@ function BranchPicker({ restaurantId, setRestaurantId, branchId, setBranchId, re
 }
 
 export default function Staff() {
+  const [searchParams] = useSearchParams();
   const [rows, setRows] = useState(null);
   const [error, setError] = useState(null);
   const [open, setOpen] = useState(false);
@@ -207,6 +209,22 @@ export default function Staff() {
     else if (fRestaurantId) params.restaurantId = fRestaurantId;
     return listStaff(params).then((r) => setRows(r.data)).catch((e) => setError(e.message));
   };
+
+  // Deep-link from an outlet home (?restaurantId=&branchId=&create=manager):
+  // prefilter the roster and open creation with the outlet prefilled.
+  useEffect(() => {
+    const rId = searchParams.get('restaurantId');
+    const bId = searchParams.get('branchId');
+    if (rId) setFilterRestaurantId(rId);
+    if (searchParams.get('create') === 'manager') {
+      if (rId) setCreateRestaurantId(rId);
+      setForm((f) => ({ ...f, role: 'MANAGER', branchId: bId ?? f.branchId }));
+      setOpen(true);
+    } else if (bId) {
+      setFilterBranchId(bId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     listRestaurants()
