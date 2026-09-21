@@ -259,6 +259,14 @@ public class AnalyticsService {
     // ---------- internals ----------
 
     private List<UUID> resolveBranches(UUID branchId) {
+        // Outlet-pinned staff are confined to home even when they pass nothing —
+        // an explicit foreign branchId 404s inside guard.branch.
+        if (branchId == null) {
+            var home = guard.homeBranch();
+            if (home.isPresent()) {
+                branchId = home.get().getId();
+            }
+        }
         if (branchId != null) {
             guard.branch(branchId);
             return List.of(branchId);

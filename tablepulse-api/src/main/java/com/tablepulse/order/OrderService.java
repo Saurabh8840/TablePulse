@@ -255,6 +255,12 @@ public class OrderService {
     @Transactional(readOnly = true)
     public List<OrderResponse> searchOrders(UUID branchId, String status, String date, boolean liveOnly) {
         UUID tenantId = TenantGuard.tenantId();
+        // Outlet-pinned staff see only home outlet history — a passed branchId
+        // outside home 404s via guard.branch; empty defaults to home.
+        Optional<Branch> home = guard.homeBranch();
+        if (home.isPresent()) {
+            branchId = home.get().getId();
+        }
         if (branchId != null) guard.branch(branchId);
         if (liveOnly) {
             // Rush-hour poll: live tickets only, oldest first, lines batched
@@ -324,6 +330,7 @@ public class OrderService {
     public OrderResponse getOrder(UUID orderId) {
         Order o = orders.findByIdAndTenantId(orderId, TenantGuard.tenantId())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Order not found"));
+        guard.enforceHomeBranch(o.getBranch().getId());
         return toOrder(o, linesOf(o.getId()));
     }
 
@@ -331,6 +338,7 @@ public class OrderService {
     public OrderResponse updateStatus(UUID orderId, String to, String reason) {
         Order order = orders.findByIdAndTenantId(orderId, TenantGuard.tenantId())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Order not found"));
+        guard.enforceHomeBranch(order.getBranch().getId());
         OrderStatus target;
         try {
             target = OrderStatus.valueOf(to.trim().toUpperCase());

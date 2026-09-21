@@ -44,6 +44,7 @@ public class RestaurantService {
     @Transactional
     public RestaurantResponse createRestaurant(CreateRestaurantRequest req) {
         roles.requireOwnerOrManager();
+        guard.requireTenantWide();
         UUID tenantId = TenantGuard.tenantId();
         Tenant tenant = tenants.findById(tenantId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid tenant"));
@@ -63,8 +64,11 @@ public class RestaurantService {
 
     @Transactional(readOnly = true)
     public List<RestaurantResponse> listRestaurants() {
-        return restaurants.findByTenantIdOrderByCreatedAtDesc(TenantGuard.tenantId())
-                .stream().map(this::toResponse).toList();
+        // Outlet-pinned staff see only their home restaurant — never the sibling outlets.
+        return guard.homeBranch()
+                .map(home -> List.of(toResponse(home.getRestaurant())))
+                .orElseGet(() -> restaurants.findByTenantIdOrderByCreatedAtDesc(TenantGuard.tenantId())
+                        .stream().map(this::toResponse).toList());
     }
 
     @Transactional(readOnly = true)
@@ -75,6 +79,7 @@ public class RestaurantService {
     @Transactional
     public RestaurantResponse updateRestaurant(UUID id, UpdateRestaurantRequest req) {
         roles.requireOwnerOrManager();
+        guard.requireTenantWide();
         Restaurant r = guard.restaurant(id);
         if (req.getName() != null && !req.getName().isBlank()) r.setName(req.getName().trim());
         if (req.getDescription() != null) r.setDescription(req.getDescription());
@@ -89,6 +94,7 @@ public class RestaurantService {
     @Transactional
     public BranchResponse createBranch(UUID restaurantId, CreateBranchRequest req) {
         roles.requireOwnerOrManager();
+        guard.requireTenantWide();
         Restaurant r = guard.restaurant(restaurantId);
         Branch b = branches.save(Branch.builder()
                 .restaurant(r)
@@ -112,6 +118,7 @@ public class RestaurantService {
     @Transactional
     public BranchResponse updateBranch(UUID branchId, UpdateBranchRequest req) {
         roles.requireOwnerOrManager();
+        guard.requireTenantWide();
         Branch b = guard.branch(branchId);
         if (req.getName() != null && !req.getName().isBlank()) b.setName(req.getName().trim());
         if (req.getAddress() != null) b.setAddress(req.getAddress());

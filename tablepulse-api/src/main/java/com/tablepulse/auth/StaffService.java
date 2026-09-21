@@ -58,7 +58,21 @@ public class StaffService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                     "Role must be one of MANAGER, WAITER, KITCHEN_STAFF");
         }
-        Branch branch = resolveBranchForRole(req.getRole(), req.getBranchId());
+        // Outlet-pinned managers hire only into home outlet — a null/foreign
+        // branchId must not escalate into a tenant-wide account.
+        Branch branch;
+        if (caller.getBranch() != null) {
+            branch = caller.getBranch();
+            if (req.getBranchId() != null && !req.getBranchId().equals(branch.getId())) {
+                throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Branch not found");
+            }
+            if (req.getRole() == Role.MANAGER) {
+                // Pinned managers create branch-scoped managers, never wide ones.
+                req.setBranchId(branch.getId());
+            }
+        } else {
+            branch = resolveBranchForRole(req.getRole(), req.getBranchId());
+        }
         String email = req.getEmail().trim().toLowerCase(Locale.ROOT);
         if (users.existsByEmailIgnoreCase(email)) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Email is already registered");
@@ -89,6 +103,10 @@ public class StaffService {
         User caller = requireActiveUser(callerId);
         requireManagerOrOwner();
         UUID tenantId = caller.getTenant().getId();
+        // Outlet-pinned callers default to home outlet — never the tenant-wide roster.
+        if (branchId == null && restaurantId == null && caller.getBranch() != null) {
+            branchId = caller.getBranch().getId();
+        }
         List<User> all = users.findByTenant_IdOrderByCreatedAtDesc(tenantId);
         if (branchId != null) {
             Branch b = guard.branch(branchId);
@@ -115,6 +133,14 @@ public class StaffService {
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Staff not found"));
         if (!staff.getTenant().getId().equals(caller.getTenant().getId())) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Staff not found");
+        }
+        // Outlet-pinned managers act only on home-outlet staff — sibling outlet
+        // staff and tenant-wide accounts are invisible to them.
+        if (caller.getBranch() != null) {
+            UUID staffBranchId = staff.getBranch() != null ? staff.getBranch().getId() : null;
+            if (!caller.getBranch().getId().equals(staffBranchId)) {
+                throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Staff not found");
+            }
         }
         if (req.getActive() == null && req.getTableIds() == null && req.getBranchId() == null) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Nothing to update");

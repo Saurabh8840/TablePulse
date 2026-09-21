@@ -9,6 +9,7 @@ import com.tablepulse.order.TableSessionRepository;
 import com.tablepulse.order.dto.OrderViews.BillResponse;
 import com.tablepulse.payment.dto.PaymentDtos.PaymentResponse;
 import com.tablepulse.payment.dto.PaymentDtos.PaymentSummary;
+import com.tablepulse.restaurant.Branch;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.Authentication;
@@ -235,6 +236,10 @@ public class PaymentService {
     @Transactional(readOnly = true)
     public List<PaymentResponse> list(UUID branchId, String date) {
         UUID tenantId = TenantGuard.tenantId();
+        Optional<Branch> home = guard.homeBranch();
+        if (home.isPresent()) {
+            branchId = home.get().getId();
+        }
         if (branchId != null) {
             guard.branch(branchId);
         }
@@ -271,6 +276,7 @@ public class PaymentService {
         if (!payment.getTenant().getId().equals(TenantGuard.tenantId())) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Payment not found");
         }
+        guard.enforceHomeBranch(payment.getBranch().getId());
         if (payment.getStatus() == PaymentStatus.COMPLETED) {
             PaymentSummary summary = paymentSummary(payment.getSession().getSessionToken());
             return toResponse(payment, summary.getPaidTotal(), summary.getBalanceDue(),
