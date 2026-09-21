@@ -254,22 +254,22 @@ public class OrderService {
 
     @Transactional(readOnly = true)
     public List<OrderResponse> searchOrders(UUID branchId, String status, String date, boolean liveOnly) {
+        return searchOrders(branchId, status, date, liveOnly, null);
+    }
+
+    @Transactional(readOnly = true)
+    public List<OrderResponse> searchOrders(UUID branchId, String status, String date,
+                                           boolean liveOnly, UUID restaurantId) {
         UUID tenantId = TenantGuard.tenantId();
         // Outlet-pinned staff see only home outlet history — a passed branchId
         // outside home 404s via guard.branch; empty defaults to home.
         Optional<Branch> home = guard.homeBranch();
         if (home.isPresent()) {
+            // Pinned callers always resolve to home — any passed scope is ignored, never leaked.
             branchId = home.get().getId();
+            restaurantId = null;
         }
         if (branchId != null) guard.branch(branchId);
-        if (liveOnly) {
-            // Rush-hour poll: live tickets only, oldest first, lines batched
-            // (2 queries total — no N+1 no matter how many tickets are live).
-            if (branchId == null) {
-                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "branchId is required for live orders");
-            }
-            return toOrderResponses(orders.findLive(tenantId, branchId));
-        }
         OrderStatus st = null;
         if (status != null && !"ALL".equalsIgnoreCase(status)) {
             try {
@@ -290,7 +290,41 @@ public class OrderService {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Date must be YYYY-MM-DD");
             }
         }
+        if (liveOnly) {
+            // Rush-hour poll: live tickets only, oldest first, lines batched
+            // (2 queries total — no N+1 no matter how many tickets are live).
+            if (branchId == null && restaurantId == null) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "branchId is required for live orders");
+            }
+            List<Order> live = new ArrayList<>();
+            for (UUID bid : scopeBranches(branchId, restaurantId)) {
+                live.addAll(orders.findLive(tenantId, bid));
+            }
+            // Oldest first across branches for a restaurant-wide live view.
+            live.sort(java.util.Comparator.comparing(Order::getPlacedAt,
+                    java.util.Comparator.nullsLast(java.util.Comparator.naturalOrder())));
+            return toOrderResponses(live);
+        }
+        if (restaurantId != null && branchId == null) {
+            var restaurant = guard.restaurant(restaurantId);
+            List<OrderResponse> out = new ArrayList<>();
+            for (Branch b : branches.findByRestaurantIdOrderByCreatedAt(restaurant.getId())) {
+                if (!b.isActive()) continue;
+                out.addAll(toOrderResponses(orders.search(tenantId, b.getId(), st, from, to)));
+            }
+            return out;
+        }
         return toOrderResponses(orders.search(tenantId, branchId, st, from, to));
+    }
+
+    /** Single branch, or all active branches of the restaurant scope. */
+    private List<UUID> scopeBranches(UUID branchId, UUID restaurantId) {
+        if (branchId != null) return List.of(branchId);
+        var restaurant = guard.restaurant(restaurantId);
+        return branches.findByRestaurantIdOrderByCreatedAt(restaurant.getId()).stream()
+                .filter(Branch::isActive)
+                .map(Branch::getId)
+                .toList();
     }
 
     /**

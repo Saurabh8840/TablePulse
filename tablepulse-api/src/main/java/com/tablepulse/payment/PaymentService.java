@@ -10,6 +10,7 @@ import com.tablepulse.order.dto.OrderViews.BillResponse;
 import com.tablepulse.payment.dto.PaymentDtos.PaymentResponse;
 import com.tablepulse.payment.dto.PaymentDtos.PaymentSummary;
 import com.tablepulse.restaurant.Branch;
+import com.tablepulse.restaurant.BranchRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.Authentication;
@@ -60,24 +61,27 @@ public class PaymentService {
     private final OrderService orderService;
     private final TenantGuard guard;
     private final UserRepository users;
+    private final BranchRepository branches;
     private final PaymentGateway gateway;
 
     @Autowired
     public PaymentService(TableSessionRepository sessions, OrderRepository orders,
                           PaymentRepository payments, OrderService orderService,
-                          TenantGuard guard, UserRepository users) {
-        this(sessions, orders, payments, orderService, guard, users, new MockGateway());
+                          TenantGuard guard, UserRepository users, BranchRepository branches) {
+        this(sessions, orders, payments, orderService, guard, users, branches, new MockGateway());
     }
 
     PaymentService(TableSessionRepository sessions, OrderRepository orders,
                    PaymentRepository payments, OrderService orderService,
-                   TenantGuard guard, UserRepository users, PaymentGateway gateway) {
+                   TenantGuard guard, UserRepository users, BranchRepository branches,
+                   PaymentGateway gateway) {
         this.sessions = sessions;
         this.orders = orders;
         this.payments = payments;
         this.orderService = orderService;
         this.guard = guard;
         this.users = users;
+        this.branches = branches;
         this.gateway = gateway;
     }
 
@@ -235,10 +239,16 @@ public class PaymentService {
 
     @Transactional(readOnly = true)
     public List<PaymentResponse> list(UUID branchId, String date) {
+        return list(branchId, date, null);
+    }
+
+    @Transactional(readOnly = true)
+    public List<PaymentResponse> list(UUID branchId, String date, UUID restaurantId) {
         UUID tenantId = TenantGuard.tenantId();
         Optional<Branch> home = guard.homeBranch();
         if (home.isPresent()) {
             branchId = home.get().getId();
+            restaurantId = null;
         }
         if (branchId != null) {
             guard.branch(branchId);
@@ -255,7 +265,17 @@ public class PaymentService {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Date must be YYYY-MM-DD");
             }
         }
-        return payments.search(tenantId, branchId, from, to).stream()
+        List<Payment> found = new java.util.ArrayList<>();
+        if (restaurantId != null && branchId == null) {
+            var restaurant = guard.restaurant(restaurantId);
+            for (var b : branches.findByRestaurantIdOrderByCreatedAt(restaurant.getId())) {
+                if (!b.isActive()) continue;
+                found.addAll(payments.search(tenantId, b.getId(), from, to));
+            }
+        } else {
+            found.addAll(payments.search(tenantId, branchId, from, to));
+        }
+        return found.stream()
                 .map(p -> {
                     BigDecimal paid = paidTotal(p.getSession().getId());
                     BillResponse bill = orderService.bill(p.getSession().getSessionToken());

@@ -1,6 +1,7 @@
 package com.tablepulse.analytics;
 
 import com.tablepulse.analytics.dto.AnalyticsDtos.DashboardSummary;
+import com.tablepulse.analytics.dto.AnalyticsDtos.RestaurantSummary;
 import com.tablepulse.analytics.dto.AnalyticsDtos.RevenueMonth;
 import com.tablepulse.analytics.dto.AnalyticsDtos.RevenuePoint;
 import com.tablepulse.analytics.dto.AnalyticsDtos.TopItem;
@@ -10,6 +11,7 @@ import com.tablepulse.order.Order;
 import com.tablepulse.order.OrderItem;
 import com.tablepulse.order.OrderItemRepository;
 import com.tablepulse.order.OrderRepository;
+import com.tablepulse.order.OrderService;
 import com.tablepulse.order.OrderStatus;
 import com.tablepulse.order.TableSessionRepository;
 import com.tablepulse.payment.Payment;
@@ -17,6 +19,7 @@ import com.tablepulse.payment.PaymentRepository;
 import com.tablepulse.payment.PaymentStatus;
 import com.tablepulse.restaurant.Branch;
 import com.tablepulse.restaurant.BranchRepository;
+import com.tablepulse.restaurant.Restaurant;
 import com.tablepulse.restaurant.RestaurantRepository;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -54,12 +57,14 @@ public class AnalyticsService {
     private final OrderRepository orders;
     private final OrderItemRepository orderItems;
     private final PaymentRepository payments;
+    private final OrderService orderService;
     private final TenantGuard guard;
     private final RoleGuard roles;
 
     public AnalyticsService(RestaurantRepository restaurants, BranchRepository branches,
                             TableSessionRepository sessions, OrderRepository orders,
                             OrderItemRepository orderItems, PaymentRepository payments,
+                            OrderService orderService,
                             TenantGuard guard, RoleGuard roles) {
         this.restaurants = restaurants;
         this.branches = branches;
@@ -67,14 +72,20 @@ public class AnalyticsService {
         this.orders = orders;
         this.orderItems = orderItems;
         this.payments = payments;
+        this.orderService = orderService;
         this.guard = guard;
         this.roles = roles;
     }
 
     @Transactional(readOnly = true)
     public DashboardSummary dashboard(UUID branchId) {
+        return dashboard(branchId, null);
+    }
+
+    @Transactional(readOnly = true)
+    public DashboardSummary dashboard(UUID branchId, UUID restaurantId) {
         roles.requireOwnerOrManager();
-        List<UUID> branchIds = resolveBranches(branchId);
+        List<UUID> branchIds = resolveBranches(branchId, restaurantId);
         UUID tenantId = TenantGuard.tenantId();
         LocalDate today = LocalDate.now(ZONE);
         Instant from = today.atStartOfDay(ZONE).toInstant();
@@ -123,12 +134,17 @@ public class AnalyticsService {
 
     @Transactional(readOnly = true)
     public List<RevenuePoint> revenuePoints(String period, UUID branchId, String month) {
+        return revenuePoints(period, branchId, null, month);
+    }
+
+    @Transactional(readOnly = true)
+    public List<RevenuePoint> revenuePoints(String period, UUID branchId, UUID restaurantId, String month) {
         roles.requireOwnerOrManager();
         String p = period == null || period.isBlank() ? "week" : period.trim().toLowerCase();
         if (!p.equals("week") && !p.equals("month")) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "period must be week or month");
         }
-        List<UUID> branchIds = resolveBranches(branchId);
+        List<UUID> branchIds = resolveBranches(branchId, restaurantId);
         UUID tenantId = TenantGuard.tenantId();
 
         List<LocalDate> days = new ArrayList<>();
@@ -156,8 +172,13 @@ public class AnalyticsService {
 
     @Transactional(readOnly = true)
     public List<RevenueMonth> revenueByMonth(UUID branchId) {
+        return revenueByMonth(branchId, null);
+    }
+
+    @Transactional(readOnly = true)
+    public List<RevenueMonth> revenueByMonth(UUID branchId, UUID restaurantId) {
         roles.requireOwnerOrManager();
-        List<UUID> branchIds = resolveBranches(branchId);
+        List<UUID> branchIds = resolveBranches(branchId, restaurantId);
         UUID tenantId = TenantGuard.tenantId();
         List<RevenueMonth> out = new ArrayList<>();
         YearMonth current = YearMonth.now(ZONE);
@@ -174,7 +195,45 @@ public class AnalyticsService {
     /** Backwards-compatible overload (week). */
     @Transactional(readOnly = true)
     public List<RevenuePoint> revenue(String period, UUID branchId) {
-        return revenuePoints(period, branchId, null);
+        return revenuePoints(period, branchId, null, null);
+    }
+
+    /**
+     * Owner home fuel: today's pulse per restaurant in one call.
+     * Pinned callers automatically get exactly their home outlet.
+     */
+    @Transactional(readOnly = true)
+    public List<RestaurantSummary> restaurantSummaries() {
+        roles.requireOwnerOrManager();
+        UUID tenantId = TenantGuard.tenantId();
+        List<Restaurant> scoped = guard.homeBranch()
+                .map(home -> List.of(home.getRestaurant()))
+                .orElseGet(() -> restaurants.findByTenantIdOrderByCreatedAtDesc(tenantId));
+        LocalDate today = LocalDate.now(ZONE);
+        Instant from = today.atStartOfDay(ZONE).toInstant();
+        Instant to = today.plusDays(1).atStartOfDay(ZONE).toInstant();
+
+        List<RestaurantSummary> out = new ArrayList<>();
+        for (Restaurant r : scoped) {
+            List<UUID> branchIds = branches.findByRestaurantIdOrderByCreatedAt(r.getId()).stream()
+                    .filter(Branch::isActive)
+                    .map(Branch::getId)
+                    .toList();
+            Bucket bucket = bucket(tenantId, branchIds, from, to);
+            long activeTables = 0;
+            BigDecimal balanceDue = BigDecimal.ZERO;
+            for (UUID b : branchIds) {
+                var active = sessions.findByTable_Branch_IdAndStatus(b, "ACTIVE");
+                activeTables += active.size();
+                for (var s : active) {
+                    BigDecimal due = orderService.bill(s.getSessionToken()).getBalanceDue();
+                    if (due != null) balanceDue = balanceDue.add(due);
+                }
+            }
+            out.add(new RestaurantSummary(r.getId(), r.getName(), r.getSlug(), branchIds.size(),
+                    bucket.revenue(), bucket.orders(), activeTables, balanceDue));
+        }
+        return out;
     }
 
     private record Bucket(BigDecimal revenue, long orders, BigDecimal orderValue) {
@@ -216,11 +275,16 @@ public class AnalyticsService {
 
     @Transactional(readOnly = true)
     public List<TopItem> topItems(int limit, UUID branchId, String date) {
+        return topItems(limit, branchId, null, date);
+    }
+
+    @Transactional(readOnly = true)
+    public List<TopItem> topItems(int limit, UUID branchId, UUID restaurantId, String date) {
         roles.requireOwnerOrManager();
         if (limit < 1 || limit > 50) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "limit must be 1-50");
         }
-        List<UUID> branchIds = resolveBranches(branchId);
+        List<UUID> branchIds = resolveBranches(branchId, restaurantId);
         UUID tenantId = TenantGuard.tenantId();
         LocalDate day = parseDateOrToday(date);
         Instant from = day.atStartOfDay(ZONE).toInstant();
@@ -259,17 +323,31 @@ public class AnalyticsService {
     // ---------- internals ----------
 
     private List<UUID> resolveBranches(UUID branchId) {
-        // Outlet-pinned staff are confined to home even when they pass nothing —
-        // an explicit foreign branchId 404s inside guard.branch.
-        if (branchId == null) {
-            var home = guard.homeBranch();
-            if (home.isPresent()) {
-                branchId = home.get().getId();
-            }
-        }
+        return resolveBranches(branchId, null);
+    }
+
+    /**
+     * Scope precedence: explicit branchId (guard-checked) > restaurantId
+     * (guard-checked, all its active branches) > home outlet for pinned staff
+     * > whole tenant for owners and all-branch managers.
+     */
+    private List<UUID> resolveBranches(UUID branchId, UUID restaurantId) {
         if (branchId != null) {
             guard.branch(branchId);
             return List.of(branchId);
+        }
+        if (restaurantId != null) {
+            var restaurant = guard.restaurant(restaurantId);
+            return branches.findByRestaurantIdOrderByCreatedAt(restaurant.getId()).stream()
+                    .filter(Branch::isActive)
+                    .map(Branch::getId)
+                    .toList();
+        }
+        // Outlet-pinned staff are confined to home even when they pass nothing —
+        // an explicit foreign branchId 404s inside guard.branch.
+        var home = guard.homeBranch();
+        if (home.isPresent()) {
+            return List.of(home.get().getId());
         }
         UUID tenantId = TenantGuard.tenantId();
         List<UUID> out = new ArrayList<>();

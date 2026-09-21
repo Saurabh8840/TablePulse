@@ -26,8 +26,9 @@ public class PaymentController {
     @GetMapping
     public ApiResponse<List<PaymentResponse>> list(
             @RequestParam(required = false) UUID branchId,
-            @RequestParam(required = false) String date) {
-        return ApiResponse.ok("Payments fetched", service.list(branchId, date));
+            @RequestParam(required = false) String date,
+            @RequestParam(required = false) UUID restaurantId) {
+        return ApiResponse.ok("Payments fetched", service.list(branchId, date, restaurantId));
     }
 
     @PatchMapping("/{id}/complete")

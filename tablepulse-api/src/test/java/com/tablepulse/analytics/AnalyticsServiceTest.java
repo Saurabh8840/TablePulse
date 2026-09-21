@@ -11,6 +11,7 @@ import com.tablepulse.order.Order;
 import com.tablepulse.order.OrderItem;
 import com.tablepulse.order.OrderItemRepository;
 import com.tablepulse.order.OrderRepository;
+import com.tablepulse.order.OrderService;
 import com.tablepulse.order.OrderStatus;
 import com.tablepulse.order.TableSession;
 import com.tablepulse.order.TableSessionRepository;
@@ -68,6 +69,8 @@ class AnalyticsServiceTest {
     @Mock
     private PaymentRepository payments;
     @Mock
+    private OrderService orderService;
+    @Mock
     private TenantGuard guard;
     @Mock
     private RoleGuard roles;
@@ -81,7 +84,7 @@ class AnalyticsServiceTest {
     @BeforeEach
     void setUp() {
         service = new AnalyticsService(restaurants, branches, sessions, orders,
-                orderItems, payments, guard, roles);
+                orderItems, payments, orderService, guard, roles);
         tenantId = UUID.randomUUID();
         TenantContext.set(tenantId);
         doNothing().when(roles).requireOwnerOrManager();
@@ -170,6 +173,60 @@ class AnalyticsServiceTest {
         assertThat(res.getOrdersToday()).isZero();
         assertThat(res.getActiveTables()).isZero();
         assertThat(res.getAvgPrepMinutes()).isNull();
+    }
+
+    @Test
+    void dashboardScopedToRestaurantStaysInsideOutlet() {
+        when(guard.restaurant(restaurant.getId())).thenReturn(restaurant);
+        when(payments.search(eq(tenantId), eq(branchId), any(), any()))
+                .thenReturn(List.of(payment("100.00", PaymentStatus.COMPLETED)));
+        when(orders.search(eq(tenantId), eq(branchId), eq(null), any(), any()))
+                .thenReturn(List.of(order(OrderStatus.SERVED, Instant.now(), Instant.now())));
+        when(sessions.findByTable_Branch_IdAndStatus(branchId, "ACTIVE")).thenReturn(List.of());
+
+        DashboardSummary res = service.dashboard(null, restaurant.getId());
+
+        assertThat(res.getTodayRevenue()).isEqualByComparingTo("100.00");
+        assertThat(res.getOrdersToday()).isEqualTo(1);
+        verify(guard).restaurant(restaurant.getId());
+    }
+
+    @Test
+    void restaurantSummariesReturnOneRowPerOutlet() {
+        when(payments.search(eq(tenantId), eq(branchId), any(), any()))
+                .thenReturn(List.of(payment("200.00", PaymentStatus.COMPLETED)));
+        when(orders.search(eq(tenantId), eq(branchId), eq(null), any(), any()))
+                .thenReturn(List.of(order(OrderStatus.SERVED, Instant.now(), Instant.now())));
+        when(sessions.findByTable_Branch_IdAndStatus(branchId, "ACTIVE")).thenReturn(List.of());
+
+        var res = service.restaurantSummaries();
+
+        assertThat(res).hasSize(1);
+        assertThat(res.get(0).getRestaurantId()).isEqualTo(restaurant.getId());
+        assertThat(res.get(0).getName()).isEqualTo("Cafe Zen");
+        assertThat(res.get(0).getBranchCount()).isEqualTo(1);
+        assertThat(res.get(0).getTodayRevenue()).isEqualByComparingTo("200.00");
+        assertThat(res.get(0).getOrdersToday()).isEqualTo(1);
+        assertThat(res.get(0).getActiveTables()).isZero();
+        assertThat(res.get(0).getBalanceDue()).isEqualByComparingTo("0");
+    }
+
+    @Test
+    void restaurantSummariesIncludeDuesFromActiveSessions() {
+        when(payments.search(eq(tenantId), eq(branchId), any(), any())).thenReturn(List.of());
+        when(orders.search(eq(tenantId), eq(branchId), eq(null), any(), any())).thenReturn(List.of());
+        TableSession active = TableSession.builder().id(UUID.randomUUID()).sessionToken("tok9").build();
+        when(sessions.findByTable_Branch_IdAndStatus(branchId, "ACTIVE")).thenReturn(List.of(active));
+        when(orderService.bill("tok9")).thenReturn(new com.tablepulse.order.dto.OrderViews.BillResponse(
+                "T1", List.of(), new BigDecimal("100.00"), new BigDecimal("5.00"),
+                BigDecimal.ZERO, new BigDecimal("105.00"),
+                new BigDecimal("65.00"), new BigDecimal("40.00"), "PARTIAL"));
+
+        var res = service.restaurantSummaries();
+
+        assertThat(res).hasSize(1);
+        assertThat(res.get(0).getActiveTables()).isEqualTo(1);
+        assertThat(res.get(0).getBalanceDue()).isEqualByComparingTo("40.00");
     }
 
     @Test

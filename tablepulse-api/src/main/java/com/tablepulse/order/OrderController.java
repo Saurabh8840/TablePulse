@@ -31,8 +31,9 @@ public class OrderController {
             @RequestParam(required = false) UUID branchId,
             @RequestParam(required = false) String status,
             @RequestParam(required = false) String date,
-            @RequestParam(required = false, defaultValue = "false") boolean liveOnly) {
-        return ApiResponse.ok("Orders fetched", service.searchOrders(branchId, status, date, liveOnly));
+            @RequestParam(required = false, defaultValue = "false") boolean liveOnly,
+            @RequestParam(required = false) UUID restaurantId) {
+        return ApiResponse.ok("Orders fetched", service.searchOrders(branchId, status, date, liveOnly, restaurantId));
     }
 
     @GetMapping("/orders/{id}")

@@ -60,6 +60,8 @@ class PaymentServiceTest {
     private TenantGuard guard;
     @Mock
     private UserRepository users;
+    @Mock
+    private com.tablepulse.restaurant.BranchRepository branches;
 
     private PaymentService service;
 
@@ -72,7 +74,7 @@ class PaymentServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new PaymentService(sessions, orders, payments, orderService, guard, users);
+        service = new PaymentService(sessions, orders, payments, orderService, guard, users, branches);
         tenantId = UUID.randomUUID();
         tenant = Tenant.builder().id(tenantId).name("Zen Foods").slug("zen-foods").build();
         Restaurant restaurant = Restaurant.builder()

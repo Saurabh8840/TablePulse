@@ -43,4 +43,17 @@ public class AnalyticsDtos {
         private long quantity;
         private BigDecimal revenue;
     }
+
+    @Data
+    @AllArgsConstructor
+    public static class RestaurantSummary {
+        private java.util.UUID restaurantId;
+        private String name;
+        private String slug;
+        private int branchCount;
+        private BigDecimal todayRevenue;
+        private long ordersToday;
+        private long activeTables;
+        private BigDecimal balanceDue;
+    }
 }
