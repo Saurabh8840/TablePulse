@@ -22,3 +22,14 @@ export const createModifierGroup = (itemId, payload) =>
 export const listModifierGroups = (itemId) => api(`/api/items/${itemId}/modifier-groups`);
 export const createModifierOption = (groupId, payload) =>
   api(`/api/modifier-groups/${groupId}/options`, { method: 'POST', body: payload });
+// Fix 3: S/M/L variant management — edit prices, sold-out toggles, deletes.
+export const updateModifierGroup = (groupId, payload) =>
+  api(`/api/modifier-groups/${groupId}`, { method: 'PUT', body: payload });
+export const deleteModifierGroup = (groupId) =>
+  api(`/api/modifier-groups/${groupId}`, { method: 'DELETE' });
+export const updateModifierOption = (optionId, payload) =>
+  api(`/api/modifier-options/${optionId}`, { method: 'PUT', body: payload });
+export const setModifierOptionAvailability = (optionId, available) =>
+  api(`/api/modifier-options/${optionId}/availability`, { method: 'PATCH', body: { available } });
+export const deleteModifierOption = (optionId) =>
+  api(`/api/modifier-options/${optionId}`, { method: 'DELETE' });

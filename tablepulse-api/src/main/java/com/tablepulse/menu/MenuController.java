@@ -12,6 +12,8 @@ import com.tablepulse.menu.dto.MenuDtos.ModifierGroupResponse;
 import com.tablepulse.menu.dto.MenuDtos.ModifierOptionResponse;
 import com.tablepulse.menu.dto.UpdateCategoryRequest;
 import com.tablepulse.menu.dto.UpdateItemRequest;
+import com.tablepulse.menu.dto.UpdateModifierGroupRequest;
+import com.tablepulse.menu.dto.UpdateModifierOptionRequest;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -126,5 +128,35 @@ public class MenuController {
     public ApiResponse<ModifierOptionResponse> createModifierOption(@PathVariable UUID id,
                                                                     @Valid @RequestBody CreateModifierOptionRequest req) {
         return ApiResponse.ok("Modifier option created", service.createModifierOption(id, req));
+    }
+
+    @PutMapping("/modifier-groups/{id}")
+    public ApiResponse<ModifierGroupResponse> updateModifierGroup(@PathVariable UUID id,
+                                                                  @Valid @RequestBody UpdateModifierGroupRequest req) {
+        return ApiResponse.ok("Modifier group updated", service.updateModifierGroup(id, req));
+    }
+
+    @DeleteMapping("/modifier-groups/{id}")
+    public ApiResponse<Void> deleteModifierGroup(@PathVariable UUID id) {
+        service.deleteModifierGroup(id);
+        return ApiResponse.ok("Modifier group deleted", null);
+    }
+
+    @PutMapping("/modifier-options/{id}")
+    public ApiResponse<ModifierOptionResponse> updateModifierOption(@PathVariable UUID id,
+                                                                    @Valid @RequestBody UpdateModifierOptionRequest req) {
+        return ApiResponse.ok("Modifier option updated", service.updateModifierOption(id, req));
+    }
+
+    @PatchMapping("/modifier-options/{id}/availability")
+    public ApiResponse<ModifierOptionResponse> setModifierOptionAvailability(@PathVariable UUID id,
+                                                                             @Valid @RequestBody AvailabilityRequest req) {
+        return ApiResponse.ok("Modifier availability updated", service.setModifierOptionAvailability(id, req));
+    }
+
+    @DeleteMapping("/modifier-options/{id}")
+    public ApiResponse<Void> deleteModifierOption(@PathVariable UUID id) {
+        service.deleteModifierOption(id);
+        return ApiResponse.ok("Modifier option deleted", null);
     }
 }

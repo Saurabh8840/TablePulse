@@ -341,6 +341,11 @@ public class OrderService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Quantity must be 1-20");
         }
         List<UUID> selected = line.getModifierOptionIds() != null ? line.getModifierOptionIds() : List.of();
+        // Fix 3: reject duplicate option ids — same S/M/L sent twice must not
+        // double-charge or slip past maxSelections.
+        if (selected.size() != new java.util.HashSet<>(selected).size()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Duplicate modifier option");
+        }
         Map<UUID, List<ModifierOption>> byGroup = new HashMap<>();
         BigDecimal modsTotal = BigDecimal.ZERO;
         List<PricedMod> mods = new ArrayList<>();
@@ -361,6 +366,22 @@ public class OrderService {
         for (ModifierGroup group : modifierGroups.findByMenuItemIdOrderByDisplayOrderAsc(item.getId())) {
             int picked = byGroup.getOrDefault(group.getId(), List.of()).size();
             int min = group.isRequired() ? Math.max(group.getMinSelections(), 1) : group.getMinSelections();
+            // Fix 3: honor defaultOption — required S/M/L group with nothing picked
+            // falls back to its available default (e.g. Small) instead of 400ing.
+            if (picked < min) {
+                var defaults = modifierOptions.findByGroupId(group.getId()).stream()
+                        .filter(o -> o.isDefaultOption() && o.isAvailable()
+                                && o.getGroup().getMenuItem().getId().equals(item.getId()))
+                        .toList();
+                if (picked == 0 && !defaults.isEmpty()
+                        && byGroup.getOrDefault(group.getId(), List.of()).isEmpty()) {
+                    ModifierOption def = defaults.get(0);
+                    byGroup.computeIfAbsent(group.getId(), k -> new ArrayList<>()).add(def);
+                    modsTotal = modsTotal.add(def.getAdditionalPrice());
+                    mods.add(new PricedMod(def));
+                    picked = 1;
+                }
+            }
             if (picked < min) {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                         "Choose at least " + min + " from " + group.getName());

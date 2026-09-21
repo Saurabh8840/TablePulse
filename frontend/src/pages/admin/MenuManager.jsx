@@ -36,16 +36,21 @@ import {
   createModifierOption,
   deleteItem,
   deleteItemImage,
+  deleteModifierGroup,
+  deleteModifierOption,
   listCategories,
   listItems,
   listModifierGroups,
   restoreItem,
   setAvailability,
+  setModifierOptionAvailability,
   updateItem,
+  updateModifierGroup,
+  updateModifierOption,
   uploadItemImage,
 } from '../../services/menu.js';
 
-const EMPTY_ITEM = { name: '', description: '', price: '', vegetarian: false, preparationTimeMinutes: '' };
+const EMPTY_ITEM = { name: '', description: '', price: '', vegetarian: false, preparationTimeMinutes: '', hasSizes: false, sizeM: '', sizeL: '' };
 
 function elapsedShort(iso) {
   const min = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 60000));
@@ -75,8 +80,10 @@ export default function MenuManager() {
   const [editForm, setEditForm] = useState(EMPTY_ITEM);
   const [editPhoto, setEditPhoto] = useState(null); // new File or 'REMOVE'
   const [editPhotoUrl, setEditPhotoUrl] = useState(null);
-  const [groupForm, setGroupForm] = useState({ name: '', required: false, maxSelections: 1 });
-  const [optForm, setOptForm] = useState({ groupId: '', name: '', additionalPrice: 0 });
+  const [groupForm, setGroupForm] = useState({ name: '', required: false, maxSelections: 1, variantMode: false });
+  const [optForm, setOptForm] = useState({ groupId: '', name: '', additionalPrice: 0, absPrice: '', defaultOption: false });
+  const [editingGroup, setEditingGroup] = useState(null); // { id, name, maxSelections }
+  const [editingOption, setEditingOption] = useState(null); // { id, name, absPrice }
   const [formError, setFormError] = useState(null);
   const [saving, setSaving] = useState(false);
   const [query, setQuery] = useState('');
@@ -161,16 +168,46 @@ export default function MenuManager() {
   async function onCreateItem(e) {
     e.preventDefault();
     setFormError(null);
+    // Fix 3: S/M/L variant-lite — base price = Small. M/L are absolute inputs
+    // converted to deltas (backend stores base + delta only, no migration).
+    const base = Number(itemForm.price);
+    if (!base || base < 0) {
+      setFormError('Base price (Small) must be 0 or more.');
+      return;
+    }
+    if (itemForm.hasSizes) {
+      const m = Number(itemForm.sizeM);
+      const l = Number(itemForm.sizeL);
+      if (!m || m < base || !l || l < base) {
+        setFormError('Medium and Large prices must be numbers at or above the Small (base) price.');
+        return;
+      }
+    }
     setSaving(true);
     try {
       const created = await createItem(activeCat.id, {
         name: itemForm.name,
         description: itemForm.description || undefined,
-        price: Number(itemForm.price),
+        price: base,
         vegetarian: itemForm.vegetarian,
         preparationTimeMinutes: itemForm.preparationTimeMinutes ? Number(itemForm.preparationTimeMinutes) : undefined,
         displayOrder: items?.length ?? 0,
       });
+      if (itemForm.hasSizes) {
+        const m = Number(itemForm.sizeM);
+        const l = Number(itemForm.sizeL);
+        const g = await createModifierGroup(created.data.id, {
+          name: 'Size',
+          required: true,
+          minSelections: 1,
+          maxSelections: 1,
+          displayOrder: 0,
+        });
+        const gid = g.data.id;
+        await createModifierOption(gid, { name: 'Small', additionalPrice: 0, defaultOption: true });
+        await createModifierOption(gid, { name: 'Medium', additionalPrice: m - base });
+        await createModifierOption(gid, { name: 'Large', additionalPrice: l - base });
+      }
       if (itemPhoto) {
         await uploadItemImage(created.data.id, itemPhoto);
       }
@@ -268,30 +305,112 @@ export default function MenuManager() {
     e.preventDefault();
     setFormError(null);
     try {
+      // Fix 3: Variant mode forces required single-select (Size S/M/L pattern).
+      const variant = !!groupForm.variantMode;
       await createModifierGroup(modOpen.id, {
         name: groupForm.name,
-        required: groupForm.required,
-        minSelections: groupForm.required ? 1 : 0,
-        maxSelections: Number(groupForm.maxSelections) || 1,
+        required: variant ? true : groupForm.required,
+        minSelections: variant ? 1 : (groupForm.required ? 1 : 0),
+        maxSelections: variant ? 1 : (Number(groupForm.maxSelections) || 1),
         displayOrder: modGroups.length,
       });
-      setGroupForm({ name: '', required: false, maxSelections: 1 });
+      setGroupForm({ name: '', required: false, maxSelections: 1, variantMode: false });
       listModifierGroups(modOpen.id).then((r) => setModGroups(r.data));
     } catch (err) {
       setFormError(err.message);
     }
   }
 
+  const refreshMods = () => listModifierGroups(modOpen.id).then((r) => setModGroups(r.data)).catch((e) => setError(e.message));
+
   async function onCreateOption(e) {
     e.preventDefault();
     setFormError(null);
     try {
+      const group = modGroups.find((g) => g.id === optForm.groupId);
+      const base = Number(modOpen?.price ?? 0);
+      // Fix 3: if absolute price given, convert abs − base → delta.
+      // S = base (+0), M/L = abs − base. Falls back to raw +₹ delta.
+      let delta = Number(optForm.additionalPrice) || 0;
+      if (optForm.absPrice !== '' && optForm.absPrice != null) {
+        const abs = Number(optForm.absPrice);
+        if (!abs || abs < base) {
+          setFormError(`Absolute price must be at or above base ₹${base.toFixed(2)} (Small).`);
+          return;
+        }
+        delta = abs - base;
+      }
       await createModifierOption(optForm.groupId, {
         name: optForm.name,
-        additionalPrice: Number(optForm.additionalPrice) || 0,
+        additionalPrice: delta,
+        defaultOption: !!optForm.defaultOption,
       });
-      setOptForm({ groupId: '', name: '', additionalPrice: 0 });
-      listModifierGroups(modOpen.id).then((r) => setModGroups(r.data));
+      setOptForm({ groupId: '', name: '', additionalPrice: 0, absPrice: '', defaultOption: false });
+      refreshMods();
+    } catch (err) {
+      setFormError(err.message);
+    }
+  }
+
+  async function onDeleteGroup(id) {
+    try {
+      await deleteModifierGroup(id);
+      refreshMods();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function onDeleteOption(id) {
+    try {
+      await deleteModifierOption(id);
+      refreshMods();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function onToggleOption(id, v) {
+    try {
+      await setModifierOptionAvailability(id, v);
+      refreshMods();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function onSaveGroupEdit(e) {
+    e.preventDefault();
+    if (!editingGroup) return;
+    try {
+      await updateModifierGroup(editingGroup.id, {
+        name: editingGroup.name,
+        maxSelections: Number(editingGroup.maxSelections) || 1,
+      });
+      setEditingGroup(null);
+      refreshMods();
+    } catch (err) {
+      setFormError(err.message);
+    }
+  }
+
+  async function onSaveOptionEdit(e) {
+    e.preventDefault();
+    if (!editingOption) return;
+    try {
+      const base = Number(modOpen?.price ?? 0);
+      const abs = Number(editingOption.absPrice);
+      const payload = { name: editingOption.name };
+      if (editingOption.absPrice !== '' && editingOption.absPrice != null) {
+        if (!abs || abs < base) {
+          setFormError(`Absolute price must be at or above base ₹${base.toFixed(2)}.`);
+          return;
+        }
+        payload.additionalPrice = abs - base;
+      }
+      await updateModifierOption(editingOption.id, payload);
+      setEditingOption(null);
+      refreshMods();
     } catch (err) {
       setFormError(err.message);
     }
@@ -501,13 +620,28 @@ export default function MenuManager() {
             <TextField label="Name" required value={itemForm.name} onChange={(e) => setItemForm((s) => ({ ...s, name: e.target.value }))} placeholder="Singapore Noodles" />
             <TextField label="Description" multiline rows={2} value={itemForm.description} onChange={(e) => setItemForm((s) => ({ ...s, description: e.target.value }))} />
             <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: '1fr 1fr 1fr' }}>
-              <TextField label="Price ₹" required type="number" value={itemForm.price} onChange={(e) => setItemForm((s) => ({ ...s, price: e.target.value }))} />
+              <TextField label={itemForm.hasSizes ? 'Small price ₹ *' : 'Price ₹'} required type="number" value={itemForm.price} onChange={(e) => setItemForm((s) => ({ ...s, price: e.target.value }))} />
               <TextField label="Prep min" type="number" value={itemForm.preparationTimeMinutes} onChange={(e) => setItemForm((s) => ({ ...s, preparationTimeMinutes: e.target.value }))} />
               <TextField label="Veg?" select value={itemForm.vegetarian ? 'veg' : 'nonveg'} onChange={(e) => setItemForm((s) => ({ ...s, vegetarian: e.target.value === 'veg' }))}>
                 <MenuItem value="veg">🟢 Veg</MenuItem>
                 <MenuItem value="nonveg">🔴 Non-veg</MenuItem>
               </TextField>
             </Box>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <Switch checked={!!itemForm.hasSizes} onChange={(_, v) => setItemForm((s) => ({ ...s, hasSizes: v }))} slotProps={{ input: { 'aria-label': 'has sizes' } }} />
+              <Typography variant="body2" fontWeight={700}>Has sizes? Small / Medium / Large with different prices</Typography>
+            </Box>
+            {itemForm.hasSizes && (
+              <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: '1fr 1fr' }}>
+                <TextField label="Medium price ₹" required type="number" value={itemForm.sizeM} onChange={(e) => setItemForm((s) => ({ ...s, sizeM: e.target.value }))} placeholder="149" />
+                <TextField label="Large price ₹" required type="number" value={itemForm.sizeL} onChange={(e) => setItemForm((s) => ({ ...s, sizeL: e.target.value }))} placeholder="199" />
+              </Box>
+            )}
+            {itemForm.hasSizes && (
+              <Typography variant="caption" color="text.secondary">
+                Base price above = Small. We auto-create a required Size group (Small +0 default, Medium/Large as differences). Single-size items like Large coffee ₹210: leave this off.
+              </Typography>
+            )}
             {formError && <Alert severity="error">{formError}</Alert>}
           </DialogContent>
           <DialogActions>
@@ -585,48 +719,91 @@ export default function MenuManager() {
         </DialogActions>
       </Dialog>
 
-      {/* Modifiers dialog */}
+      {/* Modifiers dialog — Fix 3: absolute ₹ display, edit/delete, sold-out toggles */}
       <Dialog open={!!modOpen} onClose={() => setModOpen(null)} fullWidth maxWidth="sm">
-        <DialogTitle>Modifiers — {modOpen?.name}</DialogTitle>
+        <DialogTitle>Modifiers — {modOpen?.name} (base ₹{Number(modOpen?.price ?? 0).toFixed(2)})</DialogTitle>
         <DialogContent sx={{ display: 'grid', gap: 2, pt: 1 }}>
-          {modGroups.map((g) => (
-            <Box key={g.id} sx={{ p: 1.5, borderRadius: 2, border: 1, borderColor: 'divider' }}>
-              <Typography variant="subtitle2" fontWeight={800}>
-                {g.name} {g.required && <Chip size="small" label="Required" color="primary" sx={{ ml: 0.5 }} />}
-                <Typography component="span" variant="caption" color="text.secondary" sx={{ ml: 1 }}>
-                  pick up to {g.maxSelections}
-                </Typography>
-              </Typography>
-              <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', mt: 0.75 }}>
-                {g.options.map((o) => (
-                  <Chip
-                    key={o.id}
-                    size="small"
-                    variant="outlined"
-                    label={o.additionalPrice > 0 ? `${o.name} (+₹${o.additionalPrice})` : o.name}
-                  />
-                ))}
-                {g.options.length === 0 && (
-                  <Typography variant="caption" color="text.secondary">
-                    No options yet — add one below.
+          {modGroups.map((g) => {
+            const isVariant = g.required && g.maxSelections === 1;
+            const base = Number(modOpen?.price ?? 0);
+            return (
+              <Box key={g.id} sx={{ p: 1.5, borderRadius: 2, border: 1, borderColor: 'divider' }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                  <Typography variant="subtitle2" fontWeight={800} sx={{ flexGrow: 1 }}>
+                    {g.name} {g.required && <Chip size="small" label="Required" color="primary" sx={{ ml: 0.5 }} />}
+                    {isVariant && <Chip size="small" label="Sizes" color="secondary" sx={{ ml: 0.5 }} />}
+                    <Typography component="span" variant="caption" color="text.secondary" sx={{ ml: 1 }}>
+                      pick up to {g.maxSelections}
+                    </Typography>
                   </Typography>
+                  <Tooltip title="Delete group"><IconButton size="small" onClick={() => onDeleteGroup(g.id)}><DeleteIcon fontSize="small" /></IconButton></Tooltip>
+                </Box>
+                <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', mt: 0.75 }}>
+                  {g.options.map((o) => {
+                    const abs = base + Number(o.additionalPrice ?? 0);
+                    return (
+                      <Chip
+                        key={o.id}
+                        size="small"
+                        variant={o.available ? 'outlined' : 'filled'}
+                        color={o.available ? 'default' : 'warning'}
+                        label={`${o.name} · ₹${abs.toFixed(2)}${o.defaultOption ? ' ★' : ''}${o.available ? '' : ' (sold out)'}`}
+                        onDelete={() => onDeleteOption(o.id)}
+                        deleteIcon={<Tooltip title="Delete option"><DeleteIcon fontSize="small" /></Tooltip>}
+                        onClick={() => setEditingOption({ id: o.id, name: o.name, absPrice: String(abs.toFixed(2)) })}
+                      />
+                    );
+                  })}
+                  {g.options.length === 0 && (
+                    <Typography variant="caption" color="text.secondary">
+                      No options yet — add one below.
+                    </Typography>
+                  )}
+                </Box>
+                <Box sx={{ display: 'flex', gap: 1, mt: 1, flexWrap: 'wrap' }}>
+                  <Button size="small" variant="text" onClick={() => setEditingGroup({ id: g.id, name: g.name, maxSelections: g.maxSelections })}>Rename</Button>
+                  {g.options.map((o) => (
+                    <Button key={o.id} size="small" variant="text" color={o.available ? 'warning' : 'success'} onClick={() => onToggleOption(o.id, !o.available)}>
+                      {o.available ? `86 ${o.name}` : `Restock ${o.name}`}
+                    </Button>
+                  ))}
+                </Box>
+                {editingGroup?.id === g.id && (
+                  <Box component="form" onSubmit={onSaveGroupEdit} sx={{ display: 'flex', gap: 1, mt: 1 }}>
+                    <TextField size="small" label="Group name" value={editingGroup.name} onChange={(e) => setEditingGroup((s) => ({ ...s, name: e.target.value }))} />
+                    <TextField size="small" label="Max" type="number" value={editingGroup.maxSelections} onChange={(e) => setEditingGroup((s) => ({ ...s, maxSelections: e.target.value }))} sx={{ maxWidth: 90 }} />
+                    <Button type="submit" size="small" variant="contained">Save</Button>
+                    <Button size="small" onClick={() => setEditingGroup(null)}>Cancel</Button>
+                  </Box>
                 )}
               </Box>
+            );
+          })}
+          {editingOption && (
+            <Box component="form" onSubmit={onSaveOptionEdit} sx={{ p: 1.5, borderRadius: 2, border: 1, borderColor: 'primary.main', display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+              <TextField size="small" label="Option name" value={editingOption.name} onChange={(e) => setEditingOption((s) => ({ ...s, name: e.target.value }))} />
+              <TextField size="small" label={`Absolute ₹ (base ₹${Number(modOpen?.price ?? 0).toFixed(2)})`} type="number" value={editingOption.absPrice} onChange={(e) => setEditingOption((s) => ({ ...s, absPrice: e.target.value }))} sx={{ maxWidth: 180 }} />
+              <Button type="submit" size="small" variant="contained">Save price</Button>
+              <Button size="small" onClick={() => setEditingOption(null)}>Cancel</Button>
             </Box>
-          ))}
+          )}
           <Typography variant="subtitle2" fontWeight={800}>Add group</Typography>
           <Box component="form" onSubmit={onCreateGroup} sx={{ display: 'grid', gap: 1.5 }}>
             <Box sx={{ display: 'grid', gap: 1.5, gridTemplateColumns: '2fr 1fr 1fr' }}>
-              <TextField size="small" label="Group name" required value={groupForm.name} onChange={(e) => setGroupForm((s) => ({ ...s, name: e.target.value }))} placeholder="Spice Level" />
-              <TextField size="small" label="Max picks" type="number" value={groupForm.maxSelections} onChange={(e) => setGroupForm((s) => ({ ...s, maxSelections: e.target.value }))} />
-              <TextField size="small" label="Required?" select value={groupForm.required ? 'yes' : 'no'} onChange={(e) => setGroupForm((s) => ({ ...s, required: e.target.value === 'yes' }))}>
+              <TextField size="small" label="Group name" required value={groupForm.name} onChange={(e) => setGroupForm((s) => ({ ...s, name: e.target.value }))} placeholder="Size" />
+              <TextField size="small" label="Max picks" type="number" value={groupForm.maxSelections} disabled={!!groupForm.variantMode} onChange={(e) => setGroupForm((s) => ({ ...s, maxSelections: e.target.value }))} />
+              <TextField size="small" label="Required?" select value={groupForm.required ? 'yes' : 'no'} disabled={!!groupForm.variantMode} onChange={(e) => setGroupForm((s) => ({ ...s, required: e.target.value === 'yes' }))}>
                 <MenuItem value="no">Optional</MenuItem>
                 <MenuItem value="yes">Required</MenuItem>
               </TextField>
             </Box>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <Switch size="small" checked={!!groupForm.variantMode} onChange={(_, v) => setGroupForm((s) => ({ ...s, variantMode: v }))} />
+              <Typography variant="caption" fontWeight={700}>Variant mode: required single-select (S/M/L pattern, max 1)</Typography>
+            </Box>
             <Button type="submit" variant="outlined" size="small">Add group</Button>
           </Box>
-          <Typography variant="subtitle2" fontWeight={800} sx={{ mt: 1 }}>Add option</Typography>
+          <Typography variant="subtitle2" fontWeight={800} sx={{ mt: 1 }}>Add option (absolute ₹ preferred)</Typography>
           <Box component="form" onSubmit={onCreateOption} sx={{ display: 'grid', gap: 1.5 }}>
             <Box sx={{ display: 'grid', gap: 1.5, gridTemplateColumns: '1fr 1fr' }}>
               <TextField size="small" label="Group" select required value={optForm.groupId} onChange={(e) => setOptForm((s) => ({ ...s, groupId: e.target.value }))}>
@@ -635,12 +812,17 @@ export default function MenuManager() {
                   <MenuItem key={g.id} value={g.id}>{g.name}</MenuItem>
                 ))}
               </TextField>
-              <TextField size="small" label="Option name" required value={optForm.name} onChange={(e) => setOptForm((s) => ({ ...s, name: e.target.value }))} placeholder="Extra Spicy" />
+              <TextField size="small" label="Option name" required value={optForm.name} onChange={(e) => setOptForm((s) => ({ ...s, name: e.target.value }))} placeholder="Large" />
             </Box>
-            <Box sx={{ display: 'grid', gap: 1.5, gridTemplateColumns: '1fr 1fr' }}>
-              <TextField size="small" label="+ ₹" type="number" value={optForm.additionalPrice} onChange={(e) => setOptForm((s) => ({ ...s, additionalPrice: e.target.value }))} />
-              <Button type="submit" variant="outlined" size="small">Add option</Button>
+            <Box sx={{ display: 'grid', gap: 1.5, gridTemplateColumns: '1fr 1fr 1fr' }}>
+              <TextField size="small" label={`Absolute ₹ (base ₹${Number(modOpen?.price ?? 0).toFixed(2)})`} type="number" value={optForm.absPrice} onChange={(e) => setOptForm((s) => ({ ...s, absPrice: e.target.value }))} placeholder="199" />
+              <TextField size="small" label="+ ₹ delta" type="number" value={optForm.additionalPrice} onChange={(e) => setOptForm((s) => ({ ...s, additionalPrice: e.target.value }))} />
+              <TextField size="small" label="Default?" select value={optForm.defaultOption ? 'yes' : 'no'} onChange={(e) => setOptForm((s) => ({ ...s, defaultOption: e.target.value === 'yes' }))}>
+                <MenuItem value="no">No</MenuItem>
+                <MenuItem value="yes">★ Default</MenuItem>
+              </TextField>
             </Box>
+            <Button type="submit" variant="outlined" size="small">Add option</Button>
           </Box>
           {formError && <Alert severity="error">{formError}</Alert>}
         </DialogContent>

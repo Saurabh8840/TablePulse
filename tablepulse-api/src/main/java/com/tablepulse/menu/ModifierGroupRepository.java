@@ -7,4 +7,6 @@ import java.util.UUID;
 
 public interface ModifierGroupRepository extends JpaRepository<ModifierGroup, UUID> {
     List<ModifierGroup> findByMenuItemIdOrderByDisplayOrderAsc(UUID menuItemId);
+
+    boolean existsByMenuItemIdAndNameIgnoreCase(UUID menuItemId, String name);
 }

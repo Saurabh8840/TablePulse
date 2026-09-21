@@ -9,6 +9,8 @@ import com.tablepulse.menu.dto.CreateCategoryRequest;
 import com.tablepulse.menu.dto.CreateItemRequest;
 import com.tablepulse.menu.dto.CreateModifierGroupRequest;
 import com.tablepulse.menu.dto.CreateModifierOptionRequest;
+import com.tablepulse.menu.dto.UpdateModifierGroupRequest;
+import com.tablepulse.menu.dto.UpdateModifierOptionRequest;
 import com.tablepulse.menu.dto.MenuDtos.CategoryResponse;
 import com.tablepulse.menu.dto.MenuDtos.FullMenu;
 import com.tablepulse.menu.dto.MenuDtos.ItemResponse;
@@ -232,9 +234,13 @@ public class MenuService {
         if (req.getMaxSelections() < Math.max(req.getMinSelections(), req.isRequired() ? 1 : 0)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "maxSelections must cover minSelections");
         }
+        String name = req.getName().trim();
+        if (groups.existsByMenuItemIdAndNameIgnoreCase(itemId, name)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "A group with this name already exists for this item");
+        }
         ModifierGroup g = groups.save(ModifierGroup.builder()
                 .menuItem(i)
-                .name(req.getName().trim())
+                .name(name)
                 .required(req.isRequired())
                 .minSelections(req.isRequired() ? Math.max(req.getMinSelections(), 1) : req.getMinSelections())
                 .maxSelections(req.getMaxSelections())
@@ -244,18 +250,109 @@ public class MenuService {
     }
 
     @Transactional
+    public ModifierGroupResponse updateModifierGroup(UUID groupId, UpdateModifierGroupRequest req) {
+        roles.requireOwnerOrManager();
+        ModifierGroup g = guard.modifierGroup(groupId);
+        if (req.getName() != null && !req.getName().isBlank()) {
+            String name = req.getName().trim();
+            if (!name.equalsIgnoreCase(g.getName())
+                    && groups.existsByMenuItemIdAndNameIgnoreCase(g.getMenuItem().getId(), name)) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "A group with this name already exists for this item");
+            }
+            g.setName(name);
+        }
+        if (req.getRequired() != null) g.setRequired(req.getRequired());
+        if (req.getMinSelections() != null) g.setMinSelections(req.getMinSelections());
+        if (req.getMaxSelections() != null) g.setMaxSelections(req.getMaxSelections());
+        if (req.getDisplayOrder() != null) g.setDisplayOrder(req.getDisplayOrder());
+        // Re-validate + coerce like create (Fix 3: variant mode forces required max 1).
+        if (g.getMaxSelections() < Math.max(g.getMinSelections(), g.isRequired() ? 1 : 0)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "maxSelections must cover minSelections");
+        }
+        if (g.isRequired()) g.setMinSelections(Math.max(g.getMinSelections(), 1));
+        return toGroup(groups.save(g),
+                options.findByGroupIdOrderByDisplayOrderAsc(g.getId()).stream().map(this::toOption).toList());
+    }
+
+    @Transactional
+    public void deleteModifierGroup(UUID groupId) {
+        roles.requireOwnerOrManager();
+        ModifierGroup g = guard.modifierGroup(groupId);
+        // Hard delete group + options — orders snapshot names/prices, so history is kept.
+        options.findByGroupId(g.getId()).forEach(options::delete);
+        groups.delete(g);
+    }
+
+    @Transactional
     public ModifierOptionResponse createModifierOption(UUID groupId, CreateModifierOptionRequest req) {
         roles.requireOwnerOrManager();
         ModifierGroup g = guard.modifierGroup(groupId);
+        String name = req.getName().trim();
+        if (options.existsByGroupIdAndNameIgnoreCase(groupId, name)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "An option with this name already exists in this group");
+        }
         ModifierOption o = options.save(ModifierOption.builder()
                 .group(g)
-                .name(req.getName().trim())
+                .name(name)
                 .additionalPrice(req.getAdditionalPrice() != null ? req.getAdditionalPrice() : BigDecimal.ZERO)
                 .defaultOption(req.isDefaultOption())
                 .available(req.isAvailable())
                 .displayOrder(req.getDisplayOrder())
                 .build());
+        if (o.isDefaultOption()) clearOtherDefaults(g.getId(), o.getId());
         return toOption(o);
+    }
+
+    @Transactional
+    public ModifierOptionResponse updateModifierOption(UUID optionId, UpdateModifierOptionRequest req) {
+        roles.requireOwnerOrManager();
+        ModifierOption o = options.findById(optionId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Modifier option not found"));
+        guard.modifierGroup(o.getGroup().getId()); // tenant check
+        if (req.getName() != null && !req.getName().isBlank()) {
+            String name = req.getName().trim();
+            if (!name.equalsIgnoreCase(o.getName())
+                    && options.existsByGroupIdAndNameIgnoreCase(o.getGroup().getId(), name)) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "An option with this name already exists in this group");
+            }
+            o.setName(name);
+        }
+        if (req.getAdditionalPrice() != null) o.setAdditionalPrice(req.getAdditionalPrice());
+        if (req.getAvailable() != null) o.setAvailable(req.getAvailable());
+        if (req.getDisplayOrder() != null) o.setDisplayOrder(req.getDisplayOrder());
+        if (req.getDefaultOption() != null) o.setDefaultOption(req.getDefaultOption());
+        ModifierOption saved = options.save(o);
+        if (saved.isDefaultOption()) clearOtherDefaults(saved.getGroup().getId(), saved.getId());
+        return toOption(saved);
+    }
+
+    @Transactional
+    public ModifierOptionResponse setModifierOptionAvailability(UUID optionId, AvailabilityRequest req) {
+        roles.requireAnyStaff();
+        ModifierOption o = options.findById(optionId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Modifier option not found"));
+        guard.modifierGroup(o.getGroup().getId()); // tenant check
+        o.setAvailable(req.getAvailable());
+        return toOption(options.save(o));
+    }
+
+    @Transactional
+    public void deleteModifierOption(UUID optionId) {
+        roles.requireOwnerOrManager();
+        ModifierOption o = options.findById(optionId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Modifier option not found"));
+        guard.modifierGroup(o.getGroup().getId()); // tenant check
+        options.delete(o);
+    }
+
+    /** Only one default per group — used for S/M/L pre-select (Fix 3). */
+    private void clearOtherDefaults(UUID groupId, UUID keepId) {
+        for (ModifierOption other : options.findByGroupId(groupId)) {
+            if (!other.getId().equals(keepId) && other.isDefaultOption()) {
+                other.setDefaultOption(false);
+                options.save(other);
+            }
+        }
     }
 
     @Transactional(readOnly = true)
