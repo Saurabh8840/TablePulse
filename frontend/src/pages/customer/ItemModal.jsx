@@ -1,3 +1,5 @@
+import AddIcon from '@mui/icons-material/Add';
+import RemoveIcon from '@mui/icons-material/Remove';
 import {
   Box,
   Button,
@@ -7,6 +9,7 @@ import {
   DialogActions,
   DialogContent,
   FormControlLabel,
+  IconButton,
   Radio,
   RadioGroup,
   TextField,
@@ -196,23 +199,35 @@ export default function ItemModal({ item, onClose, onAdd, onAddLines }) {
         key={o.id}
         disabled={soldOut}
         control={control}
-        label={`${o.name} — ₹${abs.toFixed(2)}${o.defaultOption ? ' ★' : ''}${soldOut ? ' (sold out)' : ''}`}
+        label={`${o.name} — ₹${abs.toFixed(2)}${o.defaultOption ? ' · default' : ''}${soldOut ? ' (sold out)' : ''}`}
       />
     );
   };
 
   return (
-    <Dialog open onClose={onClose} fullWidth maxWidth="sm" PaperProps={{ sx: { borderRadius: 4, overflow: 'hidden' } }}>
-      {/* Image header */}
-      <Box sx={{ position: 'relative', height: 190, bgcolor: 'action.hover', flexShrink: 0 }}>
+    <Dialog
+      open
+      onClose={onClose}
+      fullWidth
+      maxWidth="sm"
+      PaperProps={{ sx: { borderRadius: 4, overflow: 'hidden', maxHeight: '92vh', m: 2 } }}
+    >
+      {/* Photo header — FIXED height frame: any upload aspect (portrait,
+          landscape, square) fills the same window via cover, never blows up. */}
+      <Box sx={{ position: 'relative', height: { xs: 210, sm: 230 }, flexShrink: 0, overflow: 'hidden', bgcolor: 'action.hover' }}>
         {item.imageUrl ? (
-          <Box component="img" src={item.imageUrl} alt={item.name}
-            sx={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+          <Box
+            component="img"
+            src={item.imageUrl}
+            alt={item.name}
+            loading="lazy"
+            decoding="async"
+            sx={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center', display: 'block' }}
+          />
         ) : (
           <Box sx={{
             width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontSize: 64, fontWeight: 800, color: 'primary.main',
-            background: 'linear-gradient(135deg, #fff5ed, #ffe8d5)',
+            fontSize: 64, fontWeight: 800, letterSpacing: '-0.02em', color: 'primary.main',
           }}>
             {item.name?.[0]?.toUpperCase()}
           </Box>
@@ -223,10 +238,10 @@ export default function ItemModal({ item, onClose, onAdd, onAddLines }) {
         }} />
         <Box sx={{ position: 'absolute', left: 16, right: 16, bottom: 12, display: 'flex', alignItems: 'center', gap: 1 }}>
           <VegMark veg={!!item.vegetarian} size={18} />
-          <Typography variant="h6" fontWeight={800} sx={{ color: '#fff', flexGrow: 1 }} className="clamp-1">
+          <Typography variant="h6" fontWeight={800} sx={{ color: '#fff', flexGrow: 1, letterSpacing: '-0.01em' }} className="clamp-1">
             {item.name}
           </Typography>
-          <Chip label={`₹${Number(item.price).toFixed(2)}`} sx={{ bgcolor: '#fff', fontWeight: 800 }} size="small" />
+          <Chip label={`₹${Number(item.price).toFixed(2)}`} sx={{ bgcolor: '#fff', fontWeight: 800, fontVariantNumeric: 'tabular-nums' }} size="small" />
         </Box>
       </Box>
 
@@ -244,7 +259,7 @@ export default function ItemModal({ item, onClose, onAdd, onAddLines }) {
         )}
         {/* Fix 4 matrix: one stepper row per size */}
         {sizeGroup && matrix && (
-          <Box sx={{ p: 1.5, borderRadius: 3, border: 1, borderColor: 'divider', bgcolor: 'background.paper' }}>
+          <Box sx={{ p: 1.5, borderRadius: 3, border: 1, borderColor: 'divider', bgcolor: 'action.hover' }}>
             <Typography variant="subtitle2" fontWeight={800}>
               {sizeGroup.name}
               <Typography component="span" variant="caption" color={matrix.count > 0 ? 'text.secondary' : 'error.main'} sx={{ ml: 1 }}>
@@ -262,23 +277,24 @@ export default function ItemModal({ item, onClose, onAdd, onAddLines }) {
                       )}
                     </Typography>
                   </Box>
-                  <Button variant="outlined" size="small" disabled={!r.option.available || r.qty <= 0} onClick={() => bumpSize(r.option.id, -1)} sx={{ minWidth: 36 }}>−</Button>
-                  <Typography variant="subtitle1" fontWeight={800} sx={{ minWidth: 28, textAlign: 'center', fontVariantNumeric: 'tabular-nums' }}>
-                    {r.qty}
-                  </Typography>
-                  <Button variant="outlined" size="small" disabled={!r.option.available || r.qty >= 20} onClick={() => bumpSize(r.option.id, 1)} sx={{ minWidth: 36 }}>+</Button>
-                  {r.qty > 0 && (
-                    <Typography variant="caption" color="text.secondary" sx={{ minWidth: 64, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
-                      ₹{r.lineTotal.toFixed(2)}
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.25, border: 1, borderColor: 'divider', borderRadius: 20, px: 0.25, py: 0.1, bgcolor: 'background.paper' }}>
+                    <IconButton size="small" aria-label={`less ${r.option.name}`} disabled={!r.option.available || r.qty <= 0} onClick={() => bumpSize(r.option.id, -1)} sx={{ width: 26, height: 26 }}>
+                      <RemoveIcon fontSize="small" />
+                    </IconButton>
+                    <Typography variant="body2" fontWeight={800} sx={{ minWidth: 20, textAlign: 'center', fontVariantNumeric: 'tabular-nums' }}>
+                      {r.qty}
                     </Typography>
-                  )}
+                    <IconButton size="small" aria-label={`more ${r.option.name}`} disabled={!r.option.available || r.qty >= 20} onClick={() => bumpSize(r.option.id, 1)} sx={{ width: 26, height: 26 }}>
+                      <AddIcon fontSize="small" />
+                    </IconButton>
+                  </Box>
                 </Box>
               ))}
             </Box>
           </Box>
         )}
         {otherGroups.map((g) => (
-          <Box key={g.id} sx={{ p: 1.5, borderRadius: 3, border: 1, borderColor: 'divider', bgcolor: 'background.paper' }}>
+          <Box key={g.id} sx={{ p: 1.5, borderRadius: 3, border: 1, borderColor: 'divider', bgcolor: 'action.hover' }}>
             <Typography variant="subtitle2" fontWeight={800}>
               {g.name}
               <Typography component="span" variant="caption" color={missing.includes(g) ? 'error.main' : 'text.secondary'} sx={{ ml: 1 }}>
@@ -298,7 +314,7 @@ export default function ItemModal({ item, onClose, onAdd, onAddLines }) {
         ))}
         {/* Non-matrix fallback: single-size required group renders here */}
         {!sizeGroup && groups.filter((g) => !otherGroups.includes(g)).map((g) => (
-          <Box key={g.id} sx={{ p: 1.5, borderRadius: 3, border: 1, borderColor: 'divider', bgcolor: 'background.paper' }}>
+          <Box key={g.id} sx={{ p: 1.5, borderRadius: 3, border: 1, borderColor: 'divider', bgcolor: 'action.hover' }}>
             <Typography variant="subtitle2" fontWeight={800}>
               {g.name}
               <Typography component="span" variant="caption" color={missing.includes(g) ? 'error.main' : 'text.secondary'} sx={{ ml: 1 }}>
@@ -314,9 +330,15 @@ export default function ItemModal({ item, onClose, onAdd, onAddLines }) {
         {!sizeGroup && (
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
             <Typography variant="subtitle2" fontWeight={700}>Qty</Typography>
-            <Button variant="outlined" size="small" onClick={() => setQty((q) => Math.max(1, q - 1))} sx={{ minWidth: 40 }}>−</Button>
-            <Typography variant="h6" sx={{ minWidth: 32, textAlign: 'center', fontVariantNumeric: 'tabular-nums' }}>{qty}</Typography>
-            <Button variant="outlined" size="small" onClick={() => setQty((q) => Math.min(20, q + 1))} sx={{ minWidth: 40 }}>+</Button>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.25, border: 1, borderColor: 'divider', borderRadius: 20, px: 0.25, py: 0.1 }}>
+              <IconButton size="small" aria-label="decrease quantity" onClick={() => setQty((q) => Math.max(1, q - 1))} sx={{ width: 26, height: 26 }}>
+                <RemoveIcon fontSize="small" />
+              </IconButton>
+              <Typography variant="body2" fontWeight={800} sx={{ minWidth: 20, textAlign: 'center', fontVariantNumeric: 'tabular-nums' }}>{qty}</Typography>
+              <IconButton size="small" aria-label="increase quantity" onClick={() => setQty((q) => Math.min(20, q + 1))} sx={{ width: 26, height: 26 }}>
+                <AddIcon fontSize="small" />
+              </IconButton>
+            </Box>
             {missing.length > 0 && (
               <Chip color="warning" size="small" label={`Pick ${missing[0].name} to continue`} sx={{ ml: 'auto' }} />
             )}
@@ -329,13 +351,13 @@ export default function ItemModal({ item, onClose, onAdd, onAddLines }) {
         )}
       </DialogContent>
       <DialogActions sx={{ p: 2, pt: 1, position: 'sticky', bottom: 0, bgcolor: 'background.paper' }}>
-        <Button onClick={onClose}>Cancel</Button>
+        <Button onClick={onClose} sx={{ fontWeight: 700 }}>Cancel</Button>
         {sizeGroup ? (
-          <Button variant="contained" disabled={missing.length > 0} onClick={submitMatrix} sx={{ flexGrow: 1, borderRadius: 3, py: 1.25 }}>
+          <Button variant="contained" disabled={missing.length > 0} onClick={submitMatrix} sx={{ flexGrow: 1, borderRadius: 3, py: 1.25, fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>
             Add {matrix.count} to cart · ₹{matrix.amount.toFixed(2)}
           </Button>
         ) : (
-          <Button variant="contained" disabled={missing.length > 0} onClick={submit} sx={{ flexGrow: 1, borderRadius: 3, py: 1.25 }}>
+          <Button variant="contained" disabled={missing.length > 0} onClick={submit} sx={{ flexGrow: 1, borderRadius: 3, py: 1.25, fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>
             Add to cart · ₹{total.toFixed(2)}
           </Button>
         )}

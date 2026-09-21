@@ -1,12 +1,13 @@
+import AddIcon from '@mui/icons-material/Add';
+import RemoveIcon from '@mui/icons-material/Remove';
 import {
   Alert,
   Box,
   Button,
-  Card,
-  CardContent,
-  CircularProgress,
   Divider,
+  IconButton,
   Paper,
+  Skeleton,
   TextField,
   Typography,
 } from '@mui/material';
@@ -90,9 +91,16 @@ function CartInner() {
   if (sessionLoading) {
     return (
       <CustomerLayout title="Loading cart…">
-        <Box sx={{ display: 'flex', justifyContent: 'center', py: 6 }}>
-          <CircularProgress />
-        </Box>
+        <Paper variant="outlined" sx={{ borderRadius: 3, overflow: 'hidden', mb: 2 }}>
+          {[0, 1, 2].map((i) => (
+            <Box key={i} sx={{ p: 2, borderBottom: i === 2 ? 0 : 1, borderColor: 'divider' }}>
+              <Skeleton variant="text" width="60%" height={24} />
+              <Skeleton variant="text" width="90%" height={18} />
+              <Skeleton variant="text" width="30%" height={22} sx={{ mt: 0.5 }} />
+            </Box>
+          ))}
+        </Paper>
+        <Skeleton variant="rounded" height={120} />
       </CustomerLayout>
     );
   }
@@ -128,46 +136,62 @@ function CartInner() {
         </Alert>
       )}
 
-      <Box sx={{ display: 'grid', gap: 1.5, mb: 2 }}>
-        {lines.map((l) => (
-          <Card key={l.key} variant="outlined" sx={{ borderRadius: 3 }}>
-            <CardContent sx={{ p: 1.5, '&:last-child': { pb: 1.5 } }}>
-              <Box sx={{ display: 'flex', gap: 1, alignItems: 'flex-start' }}>
-                <Box sx={{ flexGrow: 1, minWidth: 0 }}>
-                  <Typography variant="subtitle2" fontWeight={800}>
-                    {l.name} × {l.qty}
+      <Paper variant="outlined" sx={{ borderRadius: 3, overflow: 'hidden', mb: 2 }}>
+        {lines.map((l, idx) => (
+          <Box
+            key={l.key}
+            sx={{
+              p: 2,
+              borderBottom: idx === lines.length - 1 ? 0 : 1,
+              borderColor: 'divider',
+              display: 'flex', gap: 1.5, alignItems: 'flex-start',
+            }}
+          >
+            <Box sx={{ flexGrow: 1, minWidth: 0 }}>
+              <Typography variant="subtitle1" fontWeight={700} sx={{ letterSpacing: '-0.01em', lineHeight: 1.3 }}>
+                {l.name}
+              </Typography>
+              {(l.modifiers ?? []).length > 0 && (
+                <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
+                  {(l.modifiers ?? [])
+                    .map((m) => (m.groupName ? `${m.groupName}: ${m.name}` : m.name))
+                    .join(' · ')}
+                  {l.modsTotal > 0 && ` (+₹${Number(l.modsTotal).toFixed(2)})`}
+                </Typography>
+              )}
+              {l.note && (
+                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.25 }}>
+                  “{l.note}”
+                </Typography>
+              )}
+              <Typography variant="body2" fontWeight={800} sx={{ mt: 0.5, fontVariantNumeric: 'tabular-nums' }}>
+                ₹{((Number(l.unitPrice) + Number(l.modsTotal ?? 0)) * l.qty).toFixed(2)}
+              </Typography>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 1 }}>
+                <Box
+                  sx={{
+                    display: 'flex', alignItems: 'center', gap: 0.25,
+                    border: 1, borderColor: 'divider', borderRadius: 20, px: 0.25, py: 0.1,
+                  }}
+                >
+                  <IconButton size="small" aria-label="decrease quantity" onClick={() => updateQty(l.key, l.qty - 1)} sx={{ width: 26, height: 26 }}>
+                    <RemoveIcon fontSize="small" />
+                  </IconButton>
+                  <Typography variant="body2" fontWeight={800} sx={{ minWidth: 20, textAlign: 'center', fontVariantNumeric: 'tabular-nums' }}>
+                    {l.qty}
                   </Typography>
-                  {(l.modifiers ?? []).length > 0 && (
-                    <Typography variant="body2" color="text.secondary">
-                      {(l.modifiers ?? [])
-                        .map((m) => (m.groupName ? `${m.groupName}: ${m.name}` : m.name))
-                        .join(' · ')}
-                      {l.modsTotal > 0 && ` (+₹${Number(l.modsTotal).toFixed(2)})`}
-                    </Typography>
-                  )}
-                  {l.note && (
-                    <Typography variant="caption" color="text.secondary">
-                      “{l.note}”
-                    </Typography>
-                  )}
-                  <Typography variant="body2" fontWeight={700} sx={{ mt: 0.5 }}>
-                    ₹{((Number(l.unitPrice) + Number(l.modsTotal ?? 0)) * l.qty).toFixed(2)}
-                  </Typography>
-                  {/* Fix 4: merged lines carry qty — stepper instead of remove-only */}
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 1 }}>
-                    <Button size="small" variant="outlined" onClick={() => updateQty(l.key, l.qty - 1)} sx={{ minWidth: 32 }}>−</Button>
-                    <Typography variant="body2" fontWeight={800} sx={{ minWidth: 28, textAlign: 'center' }}>{l.qty}</Typography>
-                    <Button size="small" variant="outlined" disabled={l.qty >= 20} onClick={() => updateQty(l.key, l.qty + 1)} sx={{ minWidth: 32 }}>+</Button>
-                  </Box>
+                  <IconButton size="small" aria-label="increase quantity" disabled={l.qty >= 20} onClick={() => updateQty(l.key, l.qty + 1)} sx={{ width: 26, height: 26 }}>
+                    <AddIcon fontSize="small" />
+                  </IconButton>
                 </Box>
-                <Button size="small" color="error" onClick={() => removeLine(l.key)}>
+                <Button size="small" color="error" onClick={() => removeLine(l.key)} sx={{ fontWeight: 600 }}>
                   Remove
                 </Button>
               </Box>
-            </CardContent>
-          </Card>
+            </Box>
+          </Box>
         ))}
-      </Box>
+      </Paper>
 
       <TextField
         fullWidth
@@ -207,11 +231,11 @@ function CartInner() {
         </Box>
       </Paper>
 
-      <Paper elevation={4} sx={{ position: 'sticky', bottom: 12, p: 1.25, borderRadius: 3, display: 'flex', gap: 1, zIndex: 10 }}>
-        <Button variant="outlined" onClick={() => navigate(withBranch(base))} sx={{ flexShrink: 0 }}>
+      <Paper variant="outlined" sx={{ position: 'sticky', bottom: 12, p: 1.25, borderRadius: 3, display: 'flex', gap: 1, zIndex: 10 }}>
+        <Button variant="text" onClick={() => navigate(withBranch(base))} sx={{ flexShrink: 0, fontWeight: 700 }}>
           + Add
         </Button>
-        <Button variant="contained" fullWidth disabled={placing} onClick={handlePlace} sx={{ borderRadius: 2.5 }}>
+        <Button variant="contained" fullWidth disabled={placing} onClick={handlePlace} sx={{ borderRadius: 2.5, fontWeight: 800 }}>
           {placing ? 'Placing…' : `Place Order · ₹${total.toFixed(2)}`}
         </Button>
       </Paper>

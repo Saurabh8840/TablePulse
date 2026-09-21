@@ -43,3 +43,11 @@ body {
   top: 0;
   z-index: 20;
 }
+
+/* Premium revamp: honor reduced motion — stills over shimmer/lift. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
