@@ -30,7 +30,7 @@ function MenuInner() {
   const branchId = searchParams.get('b');
   const navigate = useNavigate();
   const { token, loading: sessionLoading, error: sessionError } = useSession(slug, table, branchId);
-  const { addLine, totals } = useCart();
+  const { addLine, addLines, totals } = useCart();
 
   const [menu, setMenu] = useState(null);
   const [menuLoading, setMenuLoading] = useState(true);
@@ -293,14 +293,37 @@ function MenuInner() {
                     <Typography variant="subtitle1" fontWeight={800} lineHeight={1.25} className="clamp-1">
                       {item.name}
                     </Typography>
-                    <Typography variant="body2" fontWeight={800} sx={{ fontVariantNumeric: 'tabular-nums' }}>
-                      ₹{Number(item.price).toFixed(2)}
-                      {item.preparationTimeMinutes ? (
-                        <Typography component="span" variant="caption" color="text.secondary" sx={{ ml: 1, fontWeight: 400 }}>
-                          ~{item.preparationTimeMinutes} min
+                    {(() => {
+                      // Fix 3: size-variant items show From ₹base + sizes badge,
+                      // single-price items keep flat ₹210 display.
+                      const groups = item.modifierGroups ?? [];
+                      const sizeGroup = groups.find((g) => g.required && g.maxSelections === 1 && (g.options ?? []).length > 1);
+                      if (sizeGroup) {
+                        const base = Number(item.price);
+                        const maxAbs = Math.max(...sizeGroup.options.map((o) => base + Number(o.additionalPrice ?? 0)));
+                        return (
+                          <Typography variant="body2" fontWeight={800} sx={{ fontVariantNumeric: 'tabular-nums' }}>
+                            From ₹{base.toFixed(2)} · up to ₹{maxAbs.toFixed(2)}
+                            <Chip size="small" label={`${sizeGroup.options.length} sizes`} color="secondary" sx={{ ml: 1, height: 20 }} />
+                            {item.preparationTimeMinutes ? (
+                              <Typography component="span" variant="caption" color="text.secondary" sx={{ ml: 1, fontWeight: 400 }}>
+                                ~{item.preparationTimeMinutes} min
+                              </Typography>
+                            ) : null}
+                          </Typography>
+                        );
+                      }
+                      return (
+                        <Typography variant="body2" fontWeight={800} sx={{ fontVariantNumeric: 'tabular-nums' }}>
+                          ₹{Number(item.price).toFixed(2)}
+                          {item.preparationTimeMinutes ? (
+                            <Typography component="span" variant="caption" color="text.secondary" sx={{ ml: 1, fontWeight: 400 }}>
+                              ~{item.preparationTimeMinutes} min
+                            </Typography>
+                          ) : null}
                         </Typography>
-                      ) : null}
-                    </Typography>
+                      );
+                    })()}
                     {item.description && (
                       <Typography variant="body2" color="text.secondary" className="clamp-2" sx={{ mt: 0.25, minHeight: 20 }}>
                         {item.description}
@@ -377,13 +400,17 @@ function MenuInner() {
         )}
       </Box>
 
-      {/* Item modal */}
+      {/* Item modal — Fix 4: matrix submit adds N size lines in one tap */}
       {selected && (
         <ItemModal
           item={selected}
           onClose={() => setSelected(null)}
           onAdd={(line) => {
             addLine(line);
+            setSelected(null);
+          }}
+          onAddLines={(lines) => {
+            addLines(lines);
             setSelected(null);
           }}
         />

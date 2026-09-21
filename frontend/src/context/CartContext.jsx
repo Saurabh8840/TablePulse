@@ -25,8 +25,61 @@ export function CartProvider({ slug, table, children }) {
     [slug, table],
   );
 
+  const newKey = () => `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+  // Fix 4: same item + same modifiers + same note merge into one line.
+  // 1 Small + 2 Large = 2 lines; adding Small again bumps Small to qty 2.
+  const sameLine = (a, b) =>
+    a.menuItemId === b.menuItemId &&
+    (a.note ?? '') === (b.note ?? '') &&
+    JSON.stringify((a.modifiers ?? []).map((m) => m.id).sort()) ===
+      JSON.stringify((b.modifiers ?? []).map((m) => m.id).sort());
+
   const addLine = useCallback(
-    (line) => persist([...lines, { ...line, key: `${Date.now()}-${Math.random().toString(36).slice(2)}` }]),
+    (line) => {
+      const qty = Math.max(1, Math.min(20, line.qty ?? 1));
+      const incoming = { ...line, qty };
+      const idx = lines.findIndex((l) => sameLine(l, incoming));
+      if (idx >= 0) {
+        const next = lines.map((l, i) =>
+          i === idx ? { ...l, qty: Math.min(20, l.qty + qty) } : l,
+        );
+        persist(next);
+      } else {
+        persist([...lines, { ...incoming, key: newKey() }]);
+      }
+    },
+    [lines, persist],
+  );
+
+  const addLines = useCallback(
+    (arr) => {
+      let next = [...lines];
+      for (const raw of arr ?? []) {
+        const qty = Math.max(1, Math.min(20, raw.qty ?? 1));
+        const incoming = { ...raw, qty };
+        const idx = next.findIndex((l) => sameLine(l, incoming));
+        if (idx >= 0) {
+          next = next.map((l, i) =>
+            i === idx ? { ...l, qty: Math.min(20, l.qty + qty) } : l,
+          );
+        } else {
+          next = [...next, { ...incoming, key: newKey() }];
+        }
+      }
+      persist(next);
+    },
+    [lines, persist],
+  );
+
+  const updateQty = useCallback(
+    (k, qty) => {
+      if (qty <= 0) {
+        persist(lines.filter((l) => l.key !== k));
+        return;
+      }
+      persist(lines.map((l) => (l.key === k ? { ...l, qty: Math.max(1, Math.min(20, qty)) } : l)));
+    },
     [lines, persist],
   );
 
@@ -41,8 +94,8 @@ export function CartProvider({ slug, table, children }) {
   }, [lines]);
 
   const value = useMemo(
-    () => ({ lines, addLine, removeLine, clear, totals }),
-    [lines, addLine, removeLine, clear, totals],
+    () => ({ lines, addLine, addLines, updateQty, removeLine, clear, totals }),
+    [lines, addLine, addLines, updateQty, removeLine, clear, totals],
   );
 
   return <CartContext.Provider value={value}>{children}</CartContext.Provider>;

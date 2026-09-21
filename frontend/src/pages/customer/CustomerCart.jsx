@@ -30,7 +30,7 @@ function CartInner() {
   const branchId = searchParams.get('b');
   const navigate = useNavigate();
   const { token, loading: sessionLoading, error: sessionError } = useSession(slug, table, branchId);
-  const { lines, removeLine, clear, totals } = useCart();
+  const { lines, removeLine, updateQty, clear, totals } = useCart();
 
   const [restaurant, setRestaurant] = useState(null);
   const [note, setNote] = useState('');
@@ -139,7 +139,9 @@ function CartInner() {
                   </Typography>
                   {(l.modifiers ?? []).length > 0 && (
                     <Typography variant="body2" color="text.secondary">
-                      {(l.modifiers ?? []).map((m) => m.name).join(', ')}
+                      {(l.modifiers ?? [])
+                        .map((m) => (m.groupName ? `${m.groupName}: ${m.name}` : m.name))
+                        .join(' · ')}
                       {l.modsTotal > 0 && ` (+₹${Number(l.modsTotal).toFixed(2)})`}
                     </Typography>
                   )}
@@ -151,6 +153,12 @@ function CartInner() {
                   <Typography variant="body2" fontWeight={700} sx={{ mt: 0.5 }}>
                     ₹{((Number(l.unitPrice) + Number(l.modsTotal ?? 0)) * l.qty).toFixed(2)}
                   </Typography>
+                  {/* Fix 4: merged lines carry qty — stepper instead of remove-only */}
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 1 }}>
+                    <Button size="small" variant="outlined" onClick={() => updateQty(l.key, l.qty - 1)} sx={{ minWidth: 32 }}>−</Button>
+                    <Typography variant="body2" fontWeight={800} sx={{ minWidth: 28, textAlign: 'center' }}>{l.qty}</Typography>
+                    <Button size="small" variant="outlined" disabled={l.qty >= 20} onClick={() => updateQty(l.key, l.qty + 1)} sx={{ minWidth: 32 }}>+</Button>
+                  </Box>
                 </Box>
                 <Button size="small" color="error" onClick={() => removeLine(l.key)}>
                   Remove
