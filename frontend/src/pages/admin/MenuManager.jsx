@@ -702,6 +702,9 @@ export default function MenuManager() {
                 )}
               </Box>
             </Box>
+            <Typography variant="caption" color="text.secondary">
+              Clear, well-lit food photo (JPEG/PNG/WebP, ≤5MB). Sharp daylight shots sell — avoid dark, blurry or heavily cropped images; they appear on the guest menu, outlet page and gallery.
+            </Typography>
             <TextField label="Name" required value={editForm.name} onChange={(e) => setEditForm((s) => ({ ...s, name: e.target.value }))} />
             <TextField label="Description" multiline rows={2} value={editForm.description} onChange={(e) => setEditForm((s) => ({ ...s, description: e.target.value }))} />
             <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: '1fr 1fr 1fr' }}>

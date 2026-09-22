@@ -5,6 +5,7 @@ import { AuthProvider } from './context/AuthContext.jsx';
 import AdminHome from './pages/admin/AdminHome.jsx';
 import MenuManager from './pages/admin/MenuManager.jsx';
 import RestaurantDetail from './pages/admin/RestaurantDetail.jsx';
+import RestaurantOnboard from './pages/admin/RestaurantOnboard.jsx';
 import Restaurants from './pages/admin/Restaurants.jsx';
 import RevenueHistory from './pages/admin/RevenueHistory.jsx';
 import Staff from './pages/admin/Staff.jsx';
@@ -45,6 +46,7 @@ function App() {
                   <Route path="/admin" element={<RequireRole allow={MANAGERS}><AdminHome /></RequireRole>} />
                   <Route path="/admin/revenue" element={<RequireRole allow={MANAGERS}><RevenueHistory /></RequireRole>} />
                   <Route path="/admin/restaurants" element={<RequireRole allow={MANAGERS}><Restaurants /></RequireRole>} />
+                  <Route path="/admin/restaurants/new" element={<RequireRole allow={MANAGERS}><RestaurantOnboard /></RequireRole>} />
                   <Route path="/admin/restaurants/:id" element={<RequireRole allow={MANAGERS}><RestaurantDetail /></RequireRole>} />
                   <Route path="/admin/restaurants/:id/menu" element={<RequireRole allow={MANAGERS}><MenuManager /></RequireRole>} />
                   <Route path="/admin/branches/:branchId/tables" element={<RequireRole allow={MANAGERS}><Tables /></RequireRole>} />

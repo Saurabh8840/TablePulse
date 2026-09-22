@@ -29,6 +29,7 @@ import { searchOrders } from '../../services/kitchen.js';
 import { getPublicMenu } from '../../services/ordering.js';
 import { createBranch, getRestaurant, listBranches, updateRestaurant } from '../../services/restaurant.js';
 import { listStaff } from '../../services/staff.js';
+import { listTables } from '../../services/tables.js';
 
 const EMPTY_BRANCH = { name: '', address: '', phone: '', openingTime: '', closingTime: '' };
 const STATUSES = ['ALL', 'PLACED', 'ACCEPTED', 'PREPARING', 'READY', 'SERVED', 'COMPLETED', 'CANCELLED', 'REJECTED'];
@@ -85,6 +86,16 @@ export default function RestaurantDetail() {
 
   // Staff tab
   const [staff, setStaff] = useState(null);
+
+  // Setup checklist hub — live completion from real data, never stale flags.
+  const [setup, setSetup] = useState(null);
+  const [teamSkipped, setTeamSkipped] = useState(() => {
+    try {
+      return localStorage.getItem(`tp_setup_skip_${id}`) === '1';
+    } catch {
+      return false;
+    }
+  });
 
   // Gallery: all dish photos of this outlet (Zomato-style strip + lightbox).
   const [photos, setPhotos] = useState([]);
@@ -147,6 +158,26 @@ export default function RestaurantDetail() {
       .catch((e) => setError(e.message));
   }, [branchFilter, id]);
 
+  const loadSetup = useCallback(() => {
+    if (!rest) return Promise.resolve();
+    const bids = (branchFilter ? branches.filter((b) => b.id === branchFilter) : branches).map((b) => b.id);
+    return Promise.all([
+      getPublicMenu(rest.slug).catch(() => ({ data: { categories: [] } })),
+      Promise.all(bids.map((bid) => listTables(bid).catch(() => ({ data: [] })))),
+      listStaff({ restaurantId: id }).catch(() => ({ data: [] })),
+    ]).then(([menu, tableLists, team]) => {
+      const items = (menu.data?.categories ?? []).flatMap((c) => c.items ?? []);
+      const crew = team.data ?? [];
+      setSetup({
+        itemCount: items.length,
+        photoCount: items.filter((i) => i.imageUrl).length,
+        tableCount: tableLists.reduce((n, t) => n + (t.data ?? []).length, 0),
+        kitchenCount: crew.filter((u) => u.role === 'KITCHEN_STAFF').length,
+        waiterCount: crew.filter((u) => u.role === 'WAITER').length,
+      });
+    }).catch(() => {});
+  }, [rest, branches, branchFilter, id]);
+
   useEffect(() => {
     loadBase();
   }, [loadBase]);
@@ -180,6 +211,11 @@ export default function RestaurantDetail() {
     if (tab === 'staff') loadStaff();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, scopeKey]);
+
+  useEffect(() => {
+    if (tab === 'overview' && rest && branches.length > 0) loadSetup();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, scopeKey, rest?.slug, branches.length]);
 
   // Live orders stay fresh while the overview is open.
   useEffect(() => {
@@ -383,6 +419,98 @@ export default function RestaurantDetail() {
 
       {tab === 'overview' && (
         <>
+          {(() => {
+            if (!setup) return null;
+            const menuDone = setup.itemCount > 0;
+            const tablesDone = setup.tableCount > 0;
+            const teamDone = setup.kitchenCount > 0 || setup.waiterCount > 0;
+            const allDone = menuDone && tablesDone && (teamDone || teamSkipped);
+            if (allDone) {
+              return (
+                <Alert severity="success" sx={{ mb: 2.5 }}>
+                  Congratulations — {rest.name} is ready{teamSkipped && !teamDone ? ' (team skipped — add them anytime from Staff)' : ''}.
+                  Guests can scan, order and pay right now.
+                </Alert>
+              );
+            }
+            const steps = [
+              {
+                label: 'Add your menu',
+                hint: setup.itemCount > 0
+                  ? `${setup.itemCount} items · ${setup.photoCount} with photos`
+                  : 'Items guests browse and order from — nothing to sell yet',
+                done: menuDone,
+                actionLabel: 'Build menu',
+                onAction: () => navigate(`/admin/restaurants/${id}/menu`),
+              },
+              {
+                label: 'Set up tables + QR',
+                hint: tablesDone
+                  ? `${setup.tableCount} tables ready to scan`
+                  : 'Guests scan table codes to open the menu',
+                done: tablesDone,
+                actionLabel: 'Add tables',
+                onAction: () => {
+                  const first = branches.find((b) => b.id === branchFilter) ?? branches[0];
+                  if (first) navigate(`/admin/branches/${first.id}/tables`);
+                  else setTab('settings');
+                },
+              },
+              {
+                label: 'Add your team',
+                hint: teamDone
+                  ? `${setup.kitchenCount} kitchen · ${setup.waiterCount} waiters`
+                  : 'Kitchen and waiters — or skip: you cover the floor from any login',
+                done: teamDone,
+                actionLabel: 'Add staff',
+                onAction: () => setTab('staff'),
+                skippable: !teamDone,
+              },
+            ];
+            return (
+              <Box sx={{ mb: 2.5 }}>
+                <Typography variant="h6" fontWeight={800} sx={{ letterSpacing: '-0.01em', mb: 1 }}>
+                  Finish setting up {rest.name}
+                </Typography>
+                <Box sx={{ display: 'grid', gap: 0 }}>
+                  {steps.map((s) => (
+                    <Box key={s.label} sx={{ display: 'flex', alignItems: 'center', gap: 1.5, py: 1.25, borderBottom: 1, borderColor: 'divider' }}>
+                      <Box sx={{
+                        width: 24, height: 24, borderRadius: '50%', flexShrink: 0,
+                        bgcolor: s.done ? 'success.main' : 'action.hover',
+                        border: s.done ? 0 : 1, borderColor: 'divider',
+                        color: s.done ? '#fff' : 'text.secondary',
+                        fontSize: 13, fontWeight: 800,
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      }}>
+                        {s.done ? '✓' : '·'}
+                      </Box>
+                      <Box sx={{ flexGrow: 1, minWidth: 0 }}>
+                        <Typography variant="subtitle2" fontWeight={800}>{s.label}</Typography>
+                        <Typography variant="caption" color="text.secondary">{s.hint}</Typography>
+                      </Box>
+                      {!s.done && (
+                        <Button size="small" variant="outlined" onClick={s.onAction} sx={{ flexShrink: 0 }}>
+                          {s.actionLabel}
+                        </Button>
+                      )}
+                      {s.skippable && (
+                        <Button
+                          size="small" variant="text" sx={{ flexShrink: 0 }}
+                          onClick={() => {
+                            try { localStorage.setItem(`tp_setup_skip_${id}`, '1'); } catch { /* ignore */ }
+                            setTeamSkipped(true);
+                          }}
+                        >
+                          Skip
+                        </Button>
+                      )}
+                    </Box>
+                  ))}
+                </Box>
+              </Box>
+            );
+          })()}
           {loadingOv ? (
             <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr 1fr', lg: '1fr 1fr 1fr 1fr' } }}>
               {[0, 1, 2, 3].map((i) => <Skeleton key={i} variant="rounded" height={96} />)}

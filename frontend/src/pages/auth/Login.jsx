@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { Link as RouterLink, Navigate, useNavigate } from 'react-router-dom';
 import BrandPanel from '../../components/BrandPanel.jsx';
 import { useAuth } from '../../hooks/useAuth.js';
+import { listRestaurants } from '../../services/restaurant.js';
 import { homeForRole } from '../../utils/roles.js';
 
 export default function Login() {
@@ -22,7 +23,18 @@ export default function Login() {
     setBusy(true);
     try {
       const res = await login(form);
-      navigate(homeForRole(res.data?.user?.role), { replace: true });
+      const role = res.data?.user?.role;
+      let dest = homeForRole(role);
+      // First-time owners/managers land on restaurant setup, not a blank dashboard.
+      if (role === 'OWNER' || role === 'MANAGER') {
+        try {
+          const list = await listRestaurants();
+          if ((list.data ?? []).length === 0) dest = '/admin/restaurants';
+        } catch {
+          // Fall through to role home — the page will surface the error.
+        }
+      }
+      navigate(dest, { replace: true });
     } catch (err) {
       setError(err.message);
     } finally {

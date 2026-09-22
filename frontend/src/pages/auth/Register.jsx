@@ -20,7 +20,8 @@ export default function Register() {
     try {
       await register(form);
       await login({ email: form.email, password: form.password });
-      navigate('/admin');
+      // Brand-new owners start at restaurant setup, not an empty dashboard.
+      navigate('/admin/restaurants');
     } catch (err) {
       setError(err.message);
     } finally {
