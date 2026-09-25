@@ -1,5 +1,6 @@
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import QrCodeIcon from '@mui/icons-material/QrCode2';
 import RestaurantMenuIcon from '@mui/icons-material/RestaurantMenu';
 import SoupKitchenIcon from '@mui/icons-material/SoupKitchen';
@@ -11,21 +12,30 @@ import {
   Alert,
   Box,
   Button,
+  Checkbox,
   Chip,
+  FormControlLabel,
+  MenuItem,
   Paper,
-  Step,
-  StepLabel,
-  Stepper,
   TextField,
   Typography,
 } from '@mui/material';
-import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
-import { useState } from 'react';
-import { Link as RouterLink, useNavigate, useSearchParams } from 'react-router-dom';
-import PageHeader from '../../components/layout/PageHeader.jsx';
-import { createBranch, createRestaurant } from '../../services/restaurant.js';
-
-const STEPS = ['Restaurant profile', 'First outlet', 'Review & launch'];
+import { useEffect, useRef, useState } from 'react';
+import { Link as RouterLink, useNavigate } from 'react-router-dom';
+import ImagePicker from '../../components/ImagePicker.jsx';
+import CuisineField from '../../components/CuisineField.jsx';import PageHeader from '../../components/layout/PageHeader.jsx';
+import SeatCredentialsDialog from '../../components/SeatCredentialsDialog.jsx';
+import { useAuth } from '../../hooks/useAuth.js';
+import {
+  createBranch,
+  createRestaurant,
+  listRestaurants,
+  uploadRestaurantCover,
+  uploadRestaurantLogo,
+} from '../../services/restaurant.js';
+import { createStaff } from '../../services/staff.js';
+import { randomSeatPassword, seatName } from '../../utils/outletSeat.js';
+import { RESTAURANT_CATEGORIES } from '../../utils/restaurantMeta.js';
 
 const VALUE_PROPS = [
   {
@@ -40,8 +50,8 @@ const VALUE_PROPS = [
   },
   {
     icon: <RestaurantMenuIcon color="primary" />,
-    title: 'Per-outlet analytics',
-    body: 'Revenue, top dishes and dues for every outlet — owners see all, managers see home.',
+    title: 'Per-location analytics',
+    body: 'Revenue, top dishes and dues for every location — owners see all, managers see home.',
   },
 ];
 
@@ -52,69 +62,186 @@ const FAQS = [
   },
   {
     q: 'How fast can my restaurant go live?',
-    a: 'Same day. Complete the two steps below, print your table QR codes from the Tables page, and your menu is orderable tonight.',
+    a: 'Same day. Complete the form below, print your table QR codes from the Tables page, and your menu is orderable tonight.',
   },
   {
     q: 'What happens after I launch?',
-    a: 'Add your menu with photos, assign tables to waiters, and create logins for your outlet manager. Your dashboard starts filling from the first order.',
+    a: 'Add your menu with photos, assign tables to waiters, and create logins for your team. Your dashboard starts filling from the first order.',
   },
   {
-    q: 'Do my outlet managers see my other restaurants?',
-    a: 'No. Staff logins are locked to their home outlet — orders, payments and analytics included. Only you (and all-branch managers) see everything.',
+    q: 'I have more than one location — where do the rest go?',
+    a: 'Open your restaurant, then add locations from Settings. Each location gets its own tables, staff, QR codes and manager login.',
   },
 ];
 
-const EMPTY_REST = { name: '', description: '', currency: 'INR', taxPercentage: '5', serviceChargePercentage: '0', logoUrl: '' };
-const EMPTY_BRANCH = { name: '', address: '', phone: '', openingTime: '', closingTime: '' };
-
 export default function RestaurantOnboard() {
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
-  const isBrandMode = searchParams.get('mode') === 'brand';
-  const [step, setStep] = useState(0);
-  const [rest, setRest] = useState(EMPTY_REST);
-  const [branch, setBranch] = useState(EMPTY_BRANCH);
+  const { user } = useAuth();
+
+  const [name, setName] = useState('');
+  const [category, setCategory] = useState('');
+  const [cuisine, setCuisine] = useState('');
+  const [description, setDescription] = useState('');
+  const [logoUrl, setLogoUrl] = useState('');
+  const [coverUrl, setCoverUrl] = useState('');
+  const [ownerName, setOwnerName] = useState('');
+  const [ownerPhone, setOwnerPhone] = useState('');
+  const [ownerEmail, setOwnerEmail] = useState('');
+  const [frontDeskPhone, setFrontDeskPhone] = useState('');
+  const [shop, setShop] = useState('');
+  const [locality, setLocality] = useState('');
+  const [city, setCity] = useState('');
+  const [pincode, setPincode] = useState('');
+  const [openingTime, setOpeningTime] = useState('');
+  const [closingTime, setClosingTime] = useState('');
+  const [currency, setCurrency] = useState('INR');
+  const [taxPercentage, setTaxPercentage] = useState('5');
+  const [serviceChargePercentage, setServiceChargePercentage] = useState('0');
+  const [managerEmail, setManagerEmail] = useState('');
+  const [skipSeat, setSkipSeat] = useState(false);
+
+  // Files picked before the restaurant exists — uploaded right after create.
+  const pendingLogo = useRef(null);
+  const pendingCover = useRef(null);
+
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState(null);
+  const [creds, setCreds] = useState(null); // { email, password, outletName, restaurantId }
 
-  const setR = (k) => (e) => setRest((f) => ({ ...f, [k]: e.target.value }));
-  const setB = (k) => (e) => setBranch((f) => ({ ...f, [k]: e.target.value }));
+  // Prefill owner details from the signed-in account (editable, stored as snapshot).
+  const prefilled = useRef(false);
+  useEffect(() => {
+    if (prefilled.current || !user) return;
+    prefilled.current = true;
+    if (user.fullName) setOwnerName((v) => v || user.fullName);
+    if (user.phone) {
+      setOwnerPhone((v) => v || user.phone);
+      setFrontDeskPhone((v) => v || user.phone);
+    }
+    if (user.email) setOwnerEmail((v) => v || user.email);
+  }, [user]);
 
-  const stepValid =
-    step === 0
-      ? rest.name.trim().length >= 2
-      : step === 1
-        ? branch.name.trim().length >= 2
-        : true;
+  const valid =
+    name.trim().length >= 2 &&
+    category !== '' &&
+    cuisine.trim().length >= 2 &&
+    ownerName.trim().length >= 2 &&
+    (shop.trim() !== '' || locality.trim() !== '' || city.trim() !== '');
 
-  async function onLaunch() {
+  // Location-pinned managers can't create restaurants (backend 403) — send them home.
+  useEffect(() => {
+    if (!user?.branchId) return;
+    listRestaurants()
+      .then((r) => {
+        const home = (r.data ?? [])[0];
+        navigate(home ? `/admin/restaurants/${home.id}/setup` : '/admin/restaurants', { replace: true });
+      })
+      .catch(() => navigate('/admin/restaurants', { replace: true }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.branchId]);
+
+  // Before create: show an instant local preview and stash the File.
+  function previewAndStash(slot) {
+    return async (file) => {
+      const url = URL.createObjectURL(file);
+      if (slot === 'logo') {
+        if (logoUrl.startsWith('blob:')) URL.revokeObjectURL(logoUrl);
+        pendingLogo.current = file;
+        setLogoUrl(url);
+      } else {
+        if (coverUrl.startsWith('blob:')) URL.revokeObjectURL(coverUrl);
+        pendingCover.current = file;
+        setCoverUrl(url);
+      }
+      return url;
+    };
+  }
+
+  async function onLaunch(e) {
+    e.preventDefault();
     setCreating(true);
     setError(null);
     try {
+      const address = [shop.trim(), locality.trim(), city.trim(), pincode.trim()]
+        .filter(Boolean)
+        .join(', ');
       const r = await createRestaurant({
-        name: rest.name.trim(),
-        description: rest.description.trim() || undefined,
-        currency: (rest.currency || 'INR').toUpperCase(),
-        taxPercentage: Number(rest.taxPercentage) || 0,
-        serviceChargePercentage: Number(rest.serviceChargePercentage) || 0,
-        ...(rest.logoUrl.trim() ? { logoUrl: rest.logoUrl.trim() } : {}),
+        name: name.trim(),
+        category,
+        cuisine: cuisine.trim(),
+        description: description.trim() || undefined,
+        currency: (currency || 'INR').toUpperCase(),
+        taxPercentage: Number(taxPercentage) || 0,
+        serviceChargePercentage: Number(serviceChargePercentage) || 0,
+        ...(logoUrl.trim() && !logoUrl.startsWith('blob:') ? { logoUrl: logoUrl.trim() } : {}),
+        ...(coverUrl.trim() && !coverUrl.startsWith('blob:') ? { coverUrl: coverUrl.trim() } : {}),
+        ownerName: ownerName.trim(),
+        ...(ownerPhone.trim() ? { ownerPhone: ownerPhone.trim() } : {}),
+        ...(ownerEmail.trim() ? { ownerEmail: ownerEmail.trim() } : {}),
       });
       const restaurantId = r.data.id;
-      try {
-        await createBranch(restaurantId, {
-          name: branch.name.trim(),
-          address: branch.address.trim() || undefined,
-          phone: branch.phone.trim() || undefined,
-          openingTime: branch.openingTime || undefined,
-          closingTime: branch.closingTime || undefined,
-        });
-      } catch (branchErr) {
-        // Restaurant exists but the outlet failed — land there so the owner
-        // can add the outlet from Settings instead of losing everything.
-        navigate(`/admin/restaurants/${restaurantId}`);
-        throw new Error(`Restaurant created, but the outlet failed: ${branchErr.message}`);
+      const restaurantName = name.trim();
+      // Upload stashed files now that the restaurant exists (best effort —
+      // Settings covers the rest if this fails).
+      if (pendingLogo.current) {
+        try {
+          await uploadRestaurantLogo(restaurantId, pendingLogo.current);
+        } catch {
+          // Owner re-uploads later from Settings.
+        }
       }
-      navigate(`/admin/restaurants/${restaurantId}`);
+      if (pendingCover.current) {
+        try {
+          await uploadRestaurantCover(restaurantId, pendingCover.current);
+        } catch {
+          // Owner re-uploads later from Settings.
+        }
+      }
+      let branchId = null;
+      try {
+        // The first location carries the restaurant's own name —
+        // one restaurant, one name, no brand-vs-location confusion.
+        const b = await createBranch(restaurantId, {
+          name: restaurantName,
+          address: address || undefined,
+          phone: (frontDeskPhone.trim() || ownerPhone.trim()) || undefined,
+          openingTime: openingTime || undefined,
+          closingTime: closingTime || undefined,
+        });
+        branchId = b.data.id;
+      } catch (branchErr) {
+        // Restaurant exists but the location failed — land on setup so the owner
+        // can finish the location from there instead of losing everything.
+        navigate(`/admin/restaurants/${restaurantId}/setup`);
+        throw new Error(`Restaurant created, but the location failed: ${branchErr.message}`);
+      }
+      // Manager seat: the owner-typed email IS the restaurant's login.
+      // Skipped → no seat now; one tap in Staff later. Never auto-invented.
+      const seatEmail = skipSeat ? '' : managerEmail.trim();
+      if (seatEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(seatEmail)) {
+        throw new Error('Manager email does not look like a real email address.');
+      }
+      if (seatEmail && branchId) {
+        const password = randomSeatPassword();
+        try {
+          await createStaff({
+            email: seatEmail,
+            password,
+            fullName: seatName(restaurantName, restaurantName),
+            role: 'MANAGER',
+            branchId,
+            seat: true,
+          });
+          setCreds({ email: seatEmail, password, outletName: restaurantName, restaurantId });
+          return;
+        } catch (seatErr) {
+          if (/already registered/i.test(seatErr.message)) {
+            throw new Error('That manager email is already registered — use a different one, skip for now, or reset its password from Staff later.');
+          }
+          // Other seat failures — owner creates it later from Staff.
+        }
+      }
+      navigate(`/admin/restaurants/${restaurantId}/setup`);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -125,10 +252,8 @@ export default function RestaurantOnboard() {
   return (
     <Box>
       <PageHeader
-        title={isBrandMode ? 'Partner your brand' : 'Partner with TablePulse'}
-        subtitle={isBrandMode
-          ? 'Register the brand now — add the rest of its outlets later from Settings.'
-          : 'Grow your dine-in business — live tonight, not next quarter.'}
+        title="Partner with TablePulse"
+        subtitle="One form — your restaurant, live tonight. More locations join later from Settings."
         actions={
           <Button component={RouterLink} to="/admin/restaurants" startIcon={<ArrowBackIcon />} variant="text">
             All restaurants
@@ -137,7 +262,7 @@ export default function RestaurantOnboard() {
       />
 
       {/* Pilot checklist + value props — all true, all shipped */}
-      <Paper variant="outlined" sx={{ p: 2.5, borderRadius: 4, mb: 2 }}>
+      <Paper variant="outlined" sx={{ p: 2.5, borderRadius: 2, mb: 2 }}>
         <Typography variant="subtitle1" fontWeight={800} gutterBottom>
           Get started in minutes
         </Typography>
@@ -160,21 +285,17 @@ export default function RestaurantOnboard() {
       </Paper>
 
       <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', lg: '280px 1fr' }, alignItems: 'start' }}>
-        {/* Stepper rail + helper */}
         <Box sx={{ display: 'grid', gap: 2 }}>
-          <Paper variant="outlined" sx={{ p: 2, borderRadius: 4 }}>
+          <Paper variant="outlined" sx={{ p: 2, borderRadius: 2 }}>
             <Typography variant="subtitle2" fontWeight={800} gutterBottom>
-              Complete your registration
+              What happens next
             </Typography>
-            <Stepper activeStep={step} orientation="vertical" sx={{ mt: 1 }}>
-              {STEPS.map((label, i) => (
-                <Step key={label} completed={i < step}>
-                  <StepLabel>{label}</StepLabel>
-                </Step>
-              ))}
-            </Stepper>
+            <Typography variant="body2" color="text.secondary">
+              One tap creates your restaurant and its manager login. Then you add the menu,
+              print QR codes, and go live — tonight.
+            </Typography>
           </Paper>
-          <Paper variant="outlined" sx={{ p: 2, borderRadius: 4, display: 'flex', gap: 1.5 }}>
+          <Paper variant="outlined" sx={{ p: 2, borderRadius: 2, display: 'flex', gap: 1.5 }}>
             <SupportAgentIcon color="primary" />
             <Box>
               <Typography variant="subtitle2" fontWeight={800}>Stuck anywhere?</Typography>
@@ -185,102 +306,139 @@ export default function RestaurantOnboard() {
           </Paper>
         </Box>
 
-        {/* Step content */}
-        <Paper variant="outlined" sx={{ p: { xs: 2, md: 3 }, borderRadius: 4 }}>
+        <Paper variant="outlined" sx={{ p: { xs: 2, md: 3 }, borderRadius: 2 }}>
           {error && (
             <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>
               {error}
             </Alert>
           )}
-
-          {step === 0 && (
-            <Box sx={{ display: 'grid', gap: 2 }}>
-              <Box>
-                <Typography variant="h6" fontWeight={800}>Restaurant profile</Typography>
-                <Typography variant="body2" color="text.secondary">
-                  Guests will see this name on your QR menu.
-                </Typography>
-              </Box>
-              <TextField label="Restaurant name *" required fullWidth value={rest.name}
-                onChange={setR('name')} placeholder="MamaBhanje" inputProps={{ maxLength: 100 }} />
-              <TextField label="Description" fullWidth multiline rows={2} value={rest.description}
-                onChange={setR('description')} placeholder="Cuisines, vibe, what you're known for" />
-              <TextField label="Logo image URL (optional)" fullWidth value={rest.logoUrl}
-                onChange={setR('logoUrl')} placeholder="https://…" />
-              <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr 1fr' } }}>
-                <TextField label="Currency" value={rest.currency} onChange={setR('currency')}
-                  slotProps={{ htmlInput: { maxLength: 3 } }} />
-                <TextField label="GST %" type="number" value={rest.taxPercentage} onChange={setR('taxPercentage')} />
-                <TextField label="Service %" type="number" value={rest.serviceChargePercentage} onChange={setR('serviceChargePercentage')} />
+          <Box component="form" onSubmit={onLaunch} sx={{ display: 'grid', gap: 3 }}>
+            {/* 1 — Images first */}
+            <Box>
+              <Typography variant="h6" fontWeight={800}>Restaurant images</Typography>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                Upload from this device or paste a link. Guests and staff see these everywhere.
+              </Typography>
+              <Box sx={{ display: 'grid', gap: 3, gridTemplateColumns: { xs: '1fr', md: '280px 1fr' } }}>
+                <ImagePicker kind="logo" value={logoUrl} onChange={setLogoUrl} onPickFile={previewAndStash('logo')} disabled={creating} />
+                <ImagePicker kind="cover" value={coverUrl} onChange={setCoverUrl} onPickFile={previewAndStash('cover')} disabled={creating} />
               </Box>
             </Box>
-          )}
 
-          {step === 1 && (
-            <Box sx={{ display: 'grid', gap: 2 }}>
+            {/* 2 — Restaurant identity */}
+            <Box sx={{ borderTop: 1, borderColor: 'divider', pt: 2.5, display: 'grid', gap: 2 }}>
               <Box>
-                <Typography variant="h6" fontWeight={800}>First outlet</Typography>
+                <Typography variant="h6" fontWeight={800}>Your restaurant</Typography>
                 <Typography variant="body2" color="text.secondary">
-                  {isBrandMode
-                    ? 'Where guests will scan first. More brand outlets join later from Settings.'
-                    : 'Where guests will scan. More branches can join later from Settings.'}
+                  Guests see this name on your QR menu and bills.
                 </Typography>
               </Box>
-              <TextField label="Outlet name *" required fullWidth value={branch.name}
-                onChange={setB('name')} placeholder="Koramangala Branch" inputProps={{ maxLength: 100 }} />
-              <TextField label="Address" fullWidth multiline rows={2} value={branch.address}
-                onChange={setB('address')} placeholder="Shop, street, area, city" />
-              <TextField label="Phone" fullWidth value={branch.phone}
-                onChange={setB('phone')} placeholder="+91…" />
-              <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: '1fr 1fr' }}>
-                <TextField label="Opens (HH:mm)" value={branch.openingTime} onChange={setB('openingTime')} placeholder="11:00" />
-                <TextField label="Closes (HH:mm)" value={branch.closingTime} onChange={setB('closingTime')} placeholder="23:00" />
+              <TextField label="Restaurant name *" required value={name}
+                onChange={(e) => setName(e.target.value)} placeholder="BihariMess" inputProps={{ maxLength: 100 }} />
+              <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' } }}>
+                <TextField label="Category *" select required value={category}
+                  onChange={(e) => setCategory(e.target.value)}>
+                  {RESTAURANT_CATEGORIES.map((c) => (
+                    <MenuItem key={c} value={c}>{c}</MenuItem>
+                  ))}
+                </TextField>
+                <CuisineField value={cuisine} onChange={setCuisine} required disabled={creating} />
+              </Box>
+              <TextField label="Description" multiline rows={2} value={description}
+                onChange={(e) => setDescription(e.target.value)} placeholder="Cuisines, vibe, what you're known for" />
+            </Box>
+
+            {/* 3 — Owner & contact (prefilled from account) */}
+            <Box sx={{ borderTop: 1, borderColor: 'divider', pt: 2.5, display: 'grid', gap: 2 }}>
+              <Box>
+                <Typography variant="h6" fontWeight={800}>Owner & contact</Typography>
+                <Typography variant="body2" color="text.secondary">
+                  Prefilled from your account — confirm or correct. Stored with the restaurant.
+                </Typography>
+              </Box>
+              <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' } }}>
+                <TextField label="Owner name *" required value={ownerName}
+                  onChange={(e) => setOwnerName(e.target.value)} placeholder="Your full name" />
+                <TextField label="Owner phone *" required value={ownerPhone}
+                  onChange={(e) => setOwnerPhone(e.target.value)} placeholder="+91…" />
+              </Box>
+              <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' } }}>
+                <TextField label="Owner email" type="email" value={ownerEmail}
+                  onChange={(e) => setOwnerEmail(e.target.value)} placeholder="owner@example.com" />
+                <TextField label="Front-desk phone" value={frontDeskPhone}
+                  onChange={(e) => setFrontDeskPhone(e.target.value)} placeholder="+91…"
+                  helperText="Guests and staff call this number. Defaults to owner phone." />
               </Box>
             </Box>
-          )}
 
-          {step === 2 && (
-            <Box sx={{ display: 'grid', gap: 2 }}>
+            {/* 4 — Manager login (the restaurant's own email, typed by owner) */}
+            <Box sx={{ borderTop: 1, borderColor: 'divider', pt: 2.5, display: 'grid', gap: 2 }}>
               <Box>
-                <Typography variant="h6" fontWeight={800}>Review & launch</Typography>
+                <Typography variant="h6" fontWeight={800}>Manager login</Typography>
                 <Typography variant="body2" color="text.secondary">
-                  One tap creates the restaurant and its first outlet.
+                  This email becomes the restaurant&apos;s login — whoever holds it runs this
+                  location. Must be a real, unique email; it can back a Google login later.
                 </Typography>
               </Box>
-              <Box sx={{ p: 2, borderRadius: 3, border: 1, borderColor: 'divider', bgcolor: 'action.hover' }}>
-                <Typography variant="subtitle1" fontWeight={800}>{rest.name || '—'}</Typography>
-                <Typography variant="body2" color="text.secondary">
-                  {[rest.description, `${rest.currency} · GST ${Number(rest.taxPercentage) || 0}%`]
-                    .filter(Boolean).join(' · ')}
-                </Typography>
-                <Typography variant="body2" sx={{ mt: 1 }}>
-                  Outlet: <strong>{branch.name || '—'}</strong>
-                  {[branch.address, branch.phone,
-                    branch.openingTime && branch.closingTime ? `${branch.openingTime}–${branch.closingTime}` : null,
-                  ].filter(Boolean).join(' · ')}
-                </Typography>
-              </Box>
-              <Alert severity="info">
-                Document verification (FSSAI, GST, payouts) unlocks online payments — coming soon.
-                QR ordering, kitchen and analytics work from day one.
-              </Alert>
+              <TextField label="Manager email" type="email" value={managerEmail}
+                onChange={(e) => setManagerEmail(e.target.value)} placeholder="e.g. batichokhadelhi@gmail.com"
+                disabled={skipSeat} helperText="Shown once with its password after launch. You can reset it anytime." />
+              <FormControlLabel
+                control={<Checkbox checked={skipSeat} onChange={(e) => setSkipSeat(e.target.checked)} />}
+                label={<Typography variant="body2">I&apos;ll add a manager later — skip for now</Typography>}
+              />
             </Box>
-          )}
 
-          <Box sx={{ display: 'flex', gap: 1, mt: 3 }}>
-            <Button disabled={step === 0 || creating} onClick={() => setStep((s) => s - 1)}>
-              Back
-            </Button>
-            <Box sx={{ flexGrow: 1 }} />
-            {step < 2 ? (
-              <Button variant="contained" disabled={!stepValid} onClick={() => setStep((s) => s + 1)} sx={{ fontWeight: 800 }}>
-                Next
-              </Button>
-            ) : (
-              <Button variant="contained" disabled={creating} onClick={onLaunch} sx={{ fontWeight: 800 }}>
+            {/* 5 — Location */}
+            <Box sx={{ borderTop: 1, borderColor: 'divider', pt: 2.5, display: 'grid', gap: 2 }}>
+              <Box>
+                <Typography variant="h6" fontWeight={800}>Restaurant location</Typography>
+                <Typography variant="body2" color="text.secondary">
+                  Where guests will scan. More locations join later from Settings.
+                </Typography>
+              </Box>
+              <TextField label="Shop / building *" value={shop}
+                onChange={(e) => setShop(e.target.value)} placeholder="Shop 14, Ground Floor" />
+              <TextField label="Area / locality" value={locality}
+                onChange={(e) => setLocality(e.target.value)} placeholder="Indiranagar Stage 2" />
+              <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr 1fr', sm: '1fr 1fr 1fr' } }}>
+                <TextField label="City" value={city}
+                  onChange={(e) => setCity(e.target.value)} placeholder="Bengaluru" />
+                <TextField label="Pincode" value={pincode}
+                  onChange={(e) => setPincode(e.target.value)} placeholder="560038" slotProps={{ htmlInput: { maxLength: 6 } }} />
+                <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: '1fr 1fr', gridColumn: { xs: 'span 2', sm: 'span 1' } }}>
+                  <TextField label="Opens" value={openingTime} onChange={(e) => setOpeningTime(e.target.value)} placeholder="11:00" />
+                  <TextField label="Closes" value={closingTime} onChange={(e) => setClosingTime(e.target.value)} placeholder="23:00" />
+                </Box>
+              </Box>
+            </Box>
+
+            {/* 6 — Billing basics */}
+            <Box sx={{ borderTop: 1, borderColor: 'divider', pt: 2.5 }}>
+              <Accordion disableGutters elevation={0} sx={{ border: 1, borderColor: 'divider', borderRadius: 2 }}>
+                <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                  <Typography variant="subtitle2" fontWeight={700}>Billing basics (currency, GST, service)</Typography>
+                </AccordionSummary>
+                <AccordionDetails sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr 1fr' } }}>
+                  <TextField label="Currency" value={currency} onChange={(e) => setCurrency(e.target.value)}
+                    slotProps={{ htmlInput: { maxLength: 3 } }} />
+                  <TextField label="GST %" type="number" value={taxPercentage} onChange={(e) => setTaxPercentage(e.target.value)} />
+                  <TextField label="Service %" type="number" value={serviceChargePercentage} onChange={(e) => setServiceChargePercentage(e.target.value)} />
+                </AccordionDetails>
+              </Accordion>
+            </Box>
+
+            <Alert severity="info">
+              Document verification (FSSAI, GST, payouts) unlocks online payments — coming soon.
+              QR ordering, kitchen and analytics work from day one.
+            </Alert>
+
+            <Box sx={{ display: 'flex', gap: 1 }}>
+              <Box sx={{ flexGrow: 1 }} />
+              <Button type="submit" variant="contained" disabled={!valid || creating} sx={{ fontWeight: 800 }}>
                 {creating ? 'Launching…' : 'Launch restaurant'}
               </Button>
-            )}
+            </Box>
           </Box>
         </Paper>
       </Box>
@@ -301,6 +459,19 @@ export default function RestaurantOnboard() {
           </Accordion>
         ))}
       </Box>
+
+      <SeatCredentialsDialog
+        key={creds?.email ?? 'closed'}
+        open={!!creds}
+        email={creds?.email}
+        password={creds?.password}
+        outletName={creds?.outletName}
+        onDone={() => {
+          const rid = creds?.restaurantId;
+          setCreds(null);
+          navigate(`/admin/restaurants/${rid}/setup`);
+        }}
+      />
     </Box>
   );
 }

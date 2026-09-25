@@ -48,6 +48,24 @@ public class Restaurant {
     @Column(name = "logo_url", length = 500)
     private String logoUrl;
 
+    @Column(name = "cover_url", length = 500)
+    private String coverUrl;
+
+    @Column(length = 60)
+    private String category;
+
+    @Column(length = 200)
+    private String cuisine;
+
+    @Column(name = "owner_name", length = 120)
+    private String ownerName;
+
+    @Column(name = "owner_phone", length = 30)
+    private String ownerPhone;
+
+    @Column(name = "owner_email", length = 160)
+    private String ownerEmail;
+
     @Column(nullable = false, length = 3)
     @Builder.Default
     private String currency = "INR";

@@ -14,6 +14,12 @@ public class RestaurantResponse {
     private String slug;
     private String description;
     private String logoUrl;
+    private String coverUrl;
+    private String category;
+    private String cuisine;
+    private String ownerName;
+    private String ownerPhone;
+    private String ownerEmail;
     private String currency;
     private BigDecimal taxPercentage;
     private BigDecimal serviceChargePercentage;

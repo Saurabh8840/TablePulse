@@ -430,6 +430,6 @@ public class MenuService {
 
     private RestaurantInfo toInfo(Restaurant r) {
         return new RestaurantInfo(r.getName(), r.getSlug(), r.getDescription(), r.getLogoUrl(),
-                r.getCurrency(), r.getTaxPercentage(), r.getServiceChargePercentage());
+                r.getCoverUrl(), r.getCurrency(), r.getTaxPercentage(), r.getServiceChargePercentage());
     }
 }

@@ -15,8 +15,10 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
 import java.util.UUID;
@@ -51,6 +53,18 @@ public class RestaurantController {
     public ApiResponse<RestaurantResponse> update(@PathVariable UUID id,
                                                   @Valid @RequestBody UpdateRestaurantRequest req) {
         return ApiResponse.ok("Restaurant updated", service.updateRestaurant(id, req));
+    }
+
+    @PostMapping("/restaurants/{id}/logo")
+    public ApiResponse<RestaurantResponse> uploadLogo(@PathVariable UUID id,
+                                                      @RequestParam("file") MultipartFile file) {
+        return ApiResponse.ok("Logo uploaded", service.uploadLogo(id, file));
+    }
+
+    @PostMapping("/restaurants/{id}/cover")
+    public ApiResponse<RestaurantResponse> uploadCover(@PathVariable UUID id,
+                                                       @RequestParam("file") MultipartFile file) {
+        return ApiResponse.ok("Cover uploaded", service.uploadCover(id, file));
     }
 
     @PostMapping("/restaurants/{id}/branches")

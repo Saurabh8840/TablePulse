@@ -18,6 +18,24 @@ public class UpdateRestaurantRequest {
     @Size(max = 500)
     private String logoUrl;
 
+    @Size(max = 500)
+    private String coverUrl;
+
+    @Size(max = 60)
+    private String category;
+
+    @Size(max = 200)
+    private String cuisine;
+
+    @Size(max = 120)
+    private String ownerName;
+
+    @Size(max = 30)
+    private String ownerPhone;
+
+    @Size(max = 160)
+    private String ownerEmail;
+
     @Size(min = 3, max = 3, message = "Currency must be a 3-letter code")
     private String currency;
 

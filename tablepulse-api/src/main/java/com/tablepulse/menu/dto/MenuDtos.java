@@ -93,6 +93,7 @@ public class MenuDtos {
         private String slug;
         private String description;
         private String logoUrl;
+        private String coverUrl;
         private String currency;
         private BigDecimal taxPercentage;
         private BigDecimal serviceChargePercentage;
