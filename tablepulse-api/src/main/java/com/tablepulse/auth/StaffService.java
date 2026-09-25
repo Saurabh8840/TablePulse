@@ -1,6 +1,7 @@
 package com.tablepulse.auth;
 
 import com.tablepulse.auth.dto.CreateStaffRequest;
+import com.tablepulse.auth.dto.ResetStaffPasswordRequest;
 import com.tablepulse.auth.dto.UpdateStaffRequest;
 import com.tablepulse.auth.dto.UserResponse;
 import com.tablepulse.common.security.TenantGuard;
@@ -86,6 +87,7 @@ public class StaffService {
                 .phone(req.getPhone())
                 .role(req.getRole())
                 .active(true)
+                .seat(Boolean.TRUE.equals(req.getSeat()))
                 .build());
         if (req.getTableIds() != null) {
             assignTables(user, req.getTableIds());
@@ -123,6 +125,31 @@ public class StaffService {
                     .map(this::toResponse).toList();
         }
         return all.stream().map(this::toResponse).toList();
+    }
+
+    /**
+     * Owner-only password reset for outlet handover (Phase A outlet seat).
+     * Rotates the secret so every previously shared copy dies at once.
+     * The new password is never returned — the caller supplies it and shows
+     * it to the next holder exactly once.
+     */
+    @Transactional
+    public UserResponse resetPassword(UUID callerId, UUID staffId, ResetStaffPasswordRequest req) {
+        User caller = requireActiveUser(callerId);
+        requireOwner();
+        User staff = users.findById(staffId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Staff not found"));
+        if (!staff.getTenant().getId().equals(caller.getTenant().getId())) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Staff not found");
+        }
+        if (staff.getRole() == Role.OWNER || staff.getRole() == Role.PLATFORM_ADMIN) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Owner accounts cannot be reset here");
+        }
+        if (staff.getId().equals(caller.getId())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Use change-password for your own account");
+        }
+        staff.setPasswordHash(passwords.encode(req.getNewPassword()));
+        return toResponse(users.save(staff));
     }
 
     @Transactional
@@ -245,6 +272,14 @@ public class StaffService {
         }
     }
 
+    private void requireOwner() {
+        var auth = org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null || auth.getAuthorities().stream().noneMatch(a ->
+                a.getAuthority().equals("ROLE_OWNER"))) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Only owners can reset staff passwords");
+        }
+    }
+
     private UserResponse toResponse(User user) {
         var branch = user.getBranch();
         UUID branchId = branch != null ? branch.getId() : null;
@@ -266,6 +301,8 @@ public class StaffService {
                 branchId,
                 branchName,
                 restaurantId,
-                restaurantName);
+                restaurantName,
+                user.isSeat(),
+                user.getCreatedAt());
     }
 }

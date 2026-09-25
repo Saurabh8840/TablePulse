@@ -66,6 +66,15 @@ public class User {
     @Builder.Default
     private boolean active = true;
 
+    /**
+     * Shared restaurant seat (manager login for one location), as opposed to a
+     * personal staff account. Independent of email domain so owner-typed real
+     * emails keep working as seats.
+     */
+    @Column(name = "is_seat", nullable = false)
+    @Builder.Default
+    private boolean seat = false;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     @Builder.Default
     private Instant createdAt = Instant.now();

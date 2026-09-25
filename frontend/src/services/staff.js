@@ -13,5 +13,7 @@ export const listStaff = (params = {}) => {
 };
 export const createStaff = (payload) => api('/api/staff', { method: 'POST', body: payload });
 export const setStaffActive = (id, active) => api(`/api/staff/${id}`, { method: 'PATCH', body: { active } });
+export const resetStaffPassword = (id, newPassword) =>
+  api(`/api/staff/${id}/reset-password`, { method: 'POST', body: { newPassword } });
 export const setStaffTables = (id, tableIds) => api(`/api/staff/${id}`, { method: 'PATCH', body: { tableIds } });
 export const moveStaffBranch = (id, branchId) => api(`/api/staff/${id}`, { method: 'PATCH', body: { branchId } });

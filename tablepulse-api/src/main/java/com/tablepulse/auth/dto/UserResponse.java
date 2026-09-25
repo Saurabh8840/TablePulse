@@ -4,6 +4,7 @@ import com.tablepulse.auth.Role;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 
+import java.time.Instant;
 import java.util.UUID;
 
 @Data
@@ -20,4 +21,6 @@ public class UserResponse {
     private String branchName;
     private UUID restaurantId;
     private String restaurantName;
+    private boolean seat;
+    private Instant createdAt;
 }

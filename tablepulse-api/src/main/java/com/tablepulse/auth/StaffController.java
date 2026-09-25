@@ -1,6 +1,7 @@
 package com.tablepulse.auth;
 
 import com.tablepulse.auth.dto.CreateStaffRequest;
+import com.tablepulse.auth.dto.ResetStaffPasswordRequest;
 import com.tablepulse.auth.dto.UpdateStaffRequest;
 import com.tablepulse.auth.dto.UserResponse;
 import com.tablepulse.common.dto.ApiResponse;
@@ -51,5 +52,12 @@ public class StaffController {
                                                @PathVariable UUID id,
                                                @Valid @RequestBody UpdateStaffRequest req) {
         return ApiResponse.ok("Staff updated", staffService.setActive(UUID.fromString(auth.getName()), id, req));
+    }
+
+    @PostMapping("/{id}/reset-password")
+    public ApiResponse<UserResponse> resetPassword(Authentication auth,
+                                                   @PathVariable UUID id,
+                                                   @Valid @RequestBody ResetStaffPasswordRequest req) {
+        return ApiResponse.ok("Staff password reset", staffService.resetPassword(UUID.fromString(auth.getName()), id, req));
     }
 }

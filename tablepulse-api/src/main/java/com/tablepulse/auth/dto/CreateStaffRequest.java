@@ -41,4 +41,7 @@ public class CreateStaffRequest {
 
     /** Tables this waiter owns (owner assigns at setup). Only for WAITER role. */
     private List<UUID> tableIds;
+
+    /** Mark this login as a shared restaurant seat (manager login for one location). */
+    private Boolean seat;
 }

@@ -146,6 +146,8 @@ public class AuthService {
                 branchId,
                 branchName,
                 restaurantId,
-                restaurantName);
+                restaurantName,
+                user.isSeat(),
+                user.getCreatedAt());
     }
 }
