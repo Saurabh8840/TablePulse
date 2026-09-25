@@ -1,22 +1,39 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ColorModeContext } from './color-mode-context.js';
 
 const STORAGE_KEY = 'tablepulse-color-mode';
 
-/** Owns light/dark state (plain React + localStorage) and hands the
- *  active mode string to the MUI ThemeProvider in main.jsx. */
+const systemDark = () =>
+  typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+    ? window.matchMedia('(prefers-color-scheme: dark)').matches
+    : false;
+
+/** Owns light/dark/auto (plain React + localStorage). `mode` is always the
+ *  resolved active scheme for MUI; `choice` is what the user picked. */
 export function ColorModeProvider({ children }) {
-  const [mode, setModeState] = useState(() => {
+  const [choice, setChoiceState] = useState(() => {
     try {
-      return localStorage.getItem(STORAGE_KEY) === 'dark' ? 'dark' : 'light';
+      const v = localStorage.getItem(STORAGE_KEY);
+      return v === 'dark' || v === 'light' || v === 'auto' ? v : 'auto';
     } catch {
-      return 'light';
+      return 'auto';
     }
   });
+  const [systemIsDark, setSystemIsDark] = useState(systemDark);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return undefined;
+    const mq = window.matchMedia('(prefers-color-scheme: dark)');
+    const onChange = (e) => setSystemIsDark(e.matches);
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
+
+  const mode = choice === 'auto' ? (systemIsDark ? 'dark' : 'light') : choice;
 
   const setMode = useCallback((next) => {
-    const value = next === 'dark' ? 'dark' : 'light';
-    setModeState(value);
+    const value = next === 'dark' || next === 'light' || next === 'auto' ? next : 'light';
+    setChoiceState(value);
     try {
       localStorage.setItem(STORAGE_KEY, value);
     } catch {
@@ -25,8 +42,9 @@ export function ColorModeProvider({ children }) {
   }, []);
 
   const toggleMode = useCallback(() => {
-    setModeState((prev) => {
-      const value = prev === 'dark' ? 'light' : 'dark';
+    setChoiceState((prevChoice) => {
+      const resolved = prevChoice === 'auto' ? systemDark() : prevChoice;
+      const value = resolved === 'dark' ? 'light' : 'dark';
       try {
         localStorage.setItem(STORAGE_KEY, value);
       } catch {
@@ -36,7 +54,7 @@ export function ColorModeProvider({ children }) {
     });
   }, []);
 
-  const value = useMemo(() => ({ mode, setMode, toggleMode }), [mode, setMode, toggleMode]);
+  const value = useMemo(() => ({ mode, choice, setMode, toggleMode }), [mode, choice, setMode, toggleMode]);
 
   return <ColorModeContext.Provider value={value}>{children}</ColorModeContext.Provider>;
 }

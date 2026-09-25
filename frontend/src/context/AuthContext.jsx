@@ -39,8 +39,14 @@ export function AuthProvider({ children }) {
     setUser(null);
   }, []);
 
+  const refresh = useCallback(async () => {
+    const res = await fetchMe();
+    setUser(res.data);
+    return res.data;
+  }, []);
+
   return (
-    <AuthContext.Provider value={{ user, loading, login, register, logout }}>
+    <AuthContext.Provider value={{ user, loading, login, register, logout, refresh }}>
       {children}
     </AuthContext.Provider>
   );

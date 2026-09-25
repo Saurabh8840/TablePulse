@@ -10,7 +10,7 @@ export default function EmptyState({ icon, title, body, actionLabel, onAction, t
         px: 3,
         border: '1.5px dashed',
         borderColor: 'divider',
-        borderRadius: 5,
+        borderRadius: 2,
         bgcolor: 'background.paper',
       }}
     >

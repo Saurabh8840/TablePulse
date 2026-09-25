@@ -15,6 +15,9 @@
 
 /* Base: let Tailwind preflight + MUI CssBaseline own resets.
    Keep the app frame fluid so mobile / tablet / desktop all work. */
+html {
+  scroll-behavior: smooth;
+}
 html,
 body {
   margin: 0;

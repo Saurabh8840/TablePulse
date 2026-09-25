@@ -1,16 +1,16 @@
-import { Avatar, Box, Button, Toolbar, Typography } from '@mui/material';
+import { Avatar, Box, Button } from '@mui/material';
 import { Link as RouterLink } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth.js';
 import ModeToggle from '../ModeToggle.jsx';
 
 const LINKS = [
-  { label: 'Product', href: '#product' },
-  { label: 'How it works', href: '#how' },
+  { label: 'Product', href: '#product', active: true },
+  { label: 'Features', href: '#features' },
+  { label: 'How it Works', href: '#how' },
   { label: 'Pricing', href: '#pricing' },
-  { label: 'Status', href: '#status' },
 ];
 
-/** Public marketing navbar — no sidebar, just brand + anchors + auth CTAs. */
+/** Stitch-exact fixed header: h-20 desktop, h-16 mobile. */
 export default function PublicNav() {
   const { user } = useAuth();
 
@@ -18,53 +18,118 @@ export default function PublicNav() {
     <Box
       component="header"
       sx={(t) => ({
-        position: 'sticky',
+        position: 'fixed',
         top: 0,
+        left: 0,
+        right: 0,
         zIndex: 1100,
-        backdropFilter: 'blur(14px)',
+        backdropFilter: 'blur(20px)',
         backgroundColor:
-          t.palette.mode === 'light' ? 'rgba(250,247,242,0.88)' : 'rgba(20,17,16,0.88)',
-        color: t.palette.text.primary,
-        borderBottom: 1,
-        borderColor: 'divider',
+          t.palette.mode === 'light' ? 'rgba(255,248,245,0.85)' : 'rgba(20,17,16,0.85)',
+        boxShadow: '0 1px 8px rgba(28,25,23,0.06)',
       })}
     >
-      <Toolbar sx={{ maxWidth: 1200, mx: 'auto', width: '100%', gap: 1 }}>
-        <Avatar sx={{ bgcolor: 'primary.main', fontWeight: 800, width: 34, height: 34, borderRadius: 2.5 }}>
-          T
-        </Avatar>
-        <Typography variant="h6" fontWeight={800} sx={{ mr: 2 }}>
-          TablePulse
-        </Typography>
-        <Box sx={{ display: { xs: 'none', md: 'flex' }, gap: 0.5 }}>
-          {LINKS.map((l) => (
-            <Button key={l.label} href={l.href} color="inherit" sx={{ fontWeight: 600 }}>
-              {l.label}
+      <Box
+        sx={{
+          height: { xs: 64, lg: 80 },
+          maxWidth: 1280,
+          mx: 'auto',
+          width: '100%',
+          px: { xs: 2, md: 3, lg: 4 },
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 2,
+        }}
+      >
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+          <Box
+            component={RouterLink}
+            to="/"
+            sx={{ display: 'flex', alignItems: 'center', gap: 1.25, textDecoration: 'none', color: 'inherit' }}
+          >
+            <Avatar
+              sx={{
+                bgcolor: '#C2410C',
+                fontWeight: 800,
+                width: 40,
+                height: 40,
+                borderRadius: 2,
+                fontSize: 20,
+                boxShadow: '0 4px 12px -2px rgba(194,65,12,0.25)',
+              }}
+            >
+              T
+            </Avatar>
+            <Box
+              sx={{ fontWeight: 600, fontSize: 18, letterSpacing: '-0.01em', display: { xs: 'none', sm: 'block' } }}
+            >
+              Table<span style={{ color: '#C2410C' }}>Pulse</span>
+            </Box>
+          </Box>
+          <Box sx={{ display: { xs: 'none', lg: 'flex' }, alignItems: 'center', gap: 2.5 }}>
+            {LINKS.map((l) => (
+              <Button
+                key={l.label}
+                href={l.href}
+                sx={
+                  l.active
+                    ? { fontWeight: 800, color: 'primary.main', bgcolor: '#EEE7E3', borderRadius: 2, px: 1.5, py: 0.75 }
+                    : { fontWeight: 600, fontSize: 14, color: 'text.secondary' }
+                }
+              >
+                {l.label}
+              </Button>
+            ))}
+            <Button href="#status" sx={{ fontWeight: 600, fontSize: 14, color: 'text.secondary', gap: 1 }}>
+              <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: '#117E3B' }} />
+              Live Status
             </Button>
-          ))}
+          </Box>
         </Box>
-        <Box sx={{ flexGrow: 1 }} />
-        <ModeToggle />
-        {user ? (
-          <Button component={RouterLink} to="/admin" variant="contained">
-            Open dashboard
-          </Button>
-        ) : (
-          <>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+          <ModeToggle />
+          {!user && (
             <Button
               component={RouterLink}
               to="/login"
-              color="inherit"
-              sx={{ display: { xs: 'none', sm: 'inline-flex' }, fontWeight: 700 }}
+              sx={{
+                display: { xs: 'none', sm: 'inline-flex' },
+                height: 44,
+                px: 2.5,
+                borderRadius: 2,
+                bgcolor: '#FAF2EE',
+                color: '#C2410C',
+                fontWeight: 600,
+                fontSize: 14,
+              }}
             >
               Login
             </Button>
-            <Button component={RouterLink} to="/register" variant="contained">
-              Start free
-            </Button>
-          </>
-        )}
-      </Toolbar>
+          )}
+          <Button
+            component={RouterLink}
+            to={user ? '/admin' : '/register'}
+            variant="contained"
+            sx={{
+              height: 44,
+              px: 2.5,
+              borderRadius: 2,
+              fontWeight: 600,
+              fontSize: 14,
+              backgroundImage: 'linear-gradient(90deg, #9B2F00, #C2410C)',
+              boxShadow: '0 4px 14px -2px rgba(194,65,12,0.35)',
+            }}
+          >
+            {user ? 'Open dashboard' : 'Start Free Trial'}
+          </Button>
+          <Avatar sx={{ bgcolor: '#9B2F00', width: 32, height: 32 }}>
+            <Box component="span" className="material-symbols-outlined" sx={{ fontSize: 18, color: '#fff' }}>
+              person
+            </Box>
+          </Avatar>
+        </Box>
+      </Box>
     </Box>
   );
 }

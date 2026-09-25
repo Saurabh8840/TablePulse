@@ -210,7 +210,7 @@ export default function ItemModal({ item, onClose, onAdd, onAddLines }) {
       onClose={onClose}
       fullWidth
       maxWidth="sm"
-      PaperProps={{ sx: { borderRadius: 4, overflow: 'hidden', maxHeight: '92vh', m: 2 } }}
+      PaperProps={{ sx: { borderRadius: 2, overflow: 'hidden', maxHeight: '92vh', m: 2 } }}
     >
       {/* Photo header — FIXED height frame: any upload aspect (portrait,
           landscape, square) fills the same window via cover, never blows up. */}
@@ -259,7 +259,7 @@ export default function ItemModal({ item, onClose, onAdd, onAddLines }) {
         )}
         {/* Fix 4 matrix: one stepper row per size */}
         {sizeGroup && matrix && (
-          <Box sx={{ p: 1.5, borderRadius: 3, border: 1, borderColor: 'divider', bgcolor: 'action.hover' }}>
+          <Box sx={{ p: 1.5, borderRadius: 2, border: 1, borderColor: 'divider', bgcolor: 'action.hover' }}>
             <Typography variant="subtitle2" fontWeight={800}>
               {sizeGroup.name}
               <Typography component="span" variant="caption" color={matrix.count > 0 ? 'text.secondary' : 'error.main'} sx={{ ml: 1 }}>
@@ -294,7 +294,7 @@ export default function ItemModal({ item, onClose, onAdd, onAddLines }) {
           </Box>
         )}
         {otherGroups.map((g) => (
-          <Box key={g.id} sx={{ p: 1.5, borderRadius: 3, border: 1, borderColor: 'divider', bgcolor: 'action.hover' }}>
+          <Box key={g.id} sx={{ p: 1.5, borderRadius: 2, border: 1, borderColor: 'divider', bgcolor: 'action.hover' }}>
             <Typography variant="subtitle2" fontWeight={800}>
               {g.name}
               <Typography component="span" variant="caption" color={missing.includes(g) ? 'error.main' : 'text.secondary'} sx={{ ml: 1 }}>
@@ -314,7 +314,7 @@ export default function ItemModal({ item, onClose, onAdd, onAddLines }) {
         ))}
         {/* Non-matrix fallback: single-size required group renders here */}
         {!sizeGroup && groups.filter((g) => !otherGroups.includes(g)).map((g) => (
-          <Box key={g.id} sx={{ p: 1.5, borderRadius: 3, border: 1, borderColor: 'divider', bgcolor: 'action.hover' }}>
+          <Box key={g.id} sx={{ p: 1.5, borderRadius: 2, border: 1, borderColor: 'divider', bgcolor: 'action.hover' }}>
             <Typography variant="subtitle2" fontWeight={800}>
               {g.name}
               <Typography component="span" variant="caption" color={missing.includes(g) ? 'error.main' : 'text.secondary'} sx={{ ml: 1 }}>
@@ -353,11 +353,11 @@ export default function ItemModal({ item, onClose, onAdd, onAddLines }) {
       <DialogActions sx={{ p: 2, pt: 1, position: 'sticky', bottom: 0, bgcolor: 'background.paper' }}>
         <Button onClick={onClose} sx={{ fontWeight: 700 }}>Cancel</Button>
         {sizeGroup ? (
-          <Button variant="contained" disabled={missing.length > 0} onClick={submitMatrix} sx={{ flexGrow: 1, borderRadius: 3, py: 1.25, fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>
+          <Button variant="contained" disabled={missing.length > 0} onClick={submitMatrix} sx={{ flexGrow: 1, borderRadius: 2, py: 1.25, fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>
             Add {matrix.count} to cart · ₹{matrix.amount.toFixed(2)}
           </Button>
         ) : (
-          <Button variant="contained" disabled={missing.length > 0} onClick={submit} sx={{ flexGrow: 1, borderRadius: 3, py: 1.25, fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>
+          <Button variant="contained" disabled={missing.length > 0} onClick={submit} sx={{ flexGrow: 1, borderRadius: 2, py: 1.25, fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>
             Add to cart · ₹{total.toFixed(2)}
           </Button>
         )}

@@ -7,7 +7,7 @@ export default function StatCard({ icon, label, value, delta, hint }) {
     <Card sx={{ height: '100%', transition: 'transform .2s, box-shadow .2s', '&:hover': { transform: 'translateY(-2px)', boxShadow: 4 } }}>
       <CardContent>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 1.5 }}>
-          <Avatar sx={{ bgcolor: 'primary.main', width: 40, height: 40, borderRadius: 3 }}>{icon}</Avatar>
+          <Avatar sx={{ bgcolor: 'primary.main', width: 40, height: 40, borderRadius: 2 }}>{icon}</Avatar>
           <Typography variant="body2" color="text.secondary" fontWeight={600}>
             {label}
           </Typography>

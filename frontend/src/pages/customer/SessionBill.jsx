@@ -1,7 +1,9 @@
 import {
   Alert,
+  Avatar,
   Box,
   Button,
+  Chip,
   Divider,
   Paper,
   Skeleton,
@@ -10,10 +12,11 @@ import {
 } from '@mui/material';
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { GuestBottomNav, GuestHeader, Sym } from '../../components/guest/GuestChrome.jsx';
 import CustomerLayout from '../../components/layout/CustomerLayout.jsx';
 import EmptyState from '../../components/EmptyState.jsx';
 import { useSession } from '../../hooks/useSession.js';
-import { getBill, listSessionOrders } from '../../services/ordering.js';
+import { getBill, getPublicMenu, listSessionOrders } from '../../services/ordering.js';
 import { confirmMockPayment, payAtCounter } from '../../services/payment.js';
 
 export default function SessionBill() {
@@ -33,6 +36,9 @@ export default function SessionBill() {
   const [counterPending, setCounterPending] = useState(null);
   const [payerName, setPayerName] = useState('');
   const [payerPhone, setPayerPhone] = useState('');
+  const [restName, setRestName] = useState(null);
+  const [diners, setDiners] = useState(2);
+  const [toast, setToast] = useState(null);
 
   const withBranch = (path) => (branchId ? `${path}?b=${encodeURIComponent(branchId)}` : path);
   const base = `/r/${slug}/t/${table}`;
@@ -56,10 +62,22 @@ export default function SessionBill() {
     load();
   }, [token, load]);
 
+  useEffect(() => {
+    let alive = true;
+    getPublicMenu(slug)
+      .then((res) => {
+        if (alive) setRestName(res.data?.restaurant?.name ?? null);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [slug]);
+
   if (sessionLoading || loading) {
     return (
       <CustomerLayout title="Preparing your bill…" subtitle={`Table ${table}`}>
-        <Paper variant="outlined" sx={{ p: 2, borderRadius: 3 }}>
+        <Paper variant="outlined" sx={{ p: 2, borderRadius: 2 }}>
           <Skeleton variant="text" width="50%" height={24} sx={{ mb: 1 }} />
           <Skeleton variant="text" width="90%" height={20} />
           <Skeleton variant="text" width="75%" height={20} />
@@ -110,15 +128,37 @@ export default function SessionBill() {
     return extra;
   };
 
+  const splitBase = balanceDue > 0 ? balanceDue : Number(bill?.totalAmount ?? 0);
+  const perPerson = splitBase / Math.max(1, diners);
+  const latestOrderId = [...(orders ?? [])].sort((a, b) => new Date(b.placedAt) - new Date(a.placedAt))[0]?.id ?? null;
+
   return (
-    <CustomerLayout title={`Table ${bill?.tableNumber ?? table} · Bill`} subtitle={`Combined for this sitting${waiterName ? ` · Served by ${waiterName}` : ''}`}>
+    <CustomerLayout>
+      <GuestHeader restaurantName={restName ?? '…'} tableLabel={`Table ${bill?.tableNumber ?? table}`} />
+      <Box sx={{ height: 80 }} />
+      <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', mb: 2 }}>
+        <Avatar sx={{ bgcolor: '#C2410C', width: 32, height: 32 }}>
+          <Sym name="receipt" size={18} />
+        </Avatar>
+        <Box sx={{ flexGrow: 1 }}>
+          <Typography variant="h6" fontWeight={800} fontSize={18}>
+            Current Bill
+          </Typography>
+          <Typography variant="caption" fontSize={10} color="text.secondary">
+            Includes {(bill?.orders ?? []).length} order{(bill?.orders ?? []).length === 1 ? '' : 's'}{waiterName ? ` · Served by ${waiterName}` : ''}
+          </Typography>
+        </Box>
+        {!fullyPaid && (
+          <Chip size="small" label="Unsettled" sx={{ bgcolor: '#99EFE5', color: '#006A63', fontWeight: 800, fontSize: 10 }} />
+        )}
+      </Box>
       {error && (
         <Alert severity="warning" sx={{ mb: 2 }} onClose={() => setError(null)}>
           Refresh issue: {error}
         </Alert>
       )}
 
-      <Paper variant="outlined" sx={{ p: 2, borderRadius: 3, mb: 2 }}>
+      <Paper variant="outlined" sx={{ p: 2, borderRadius: 2, mb: 2 }}>
         {(bill?.orders ?? []).map((line, i) => (
           <Box key={i} sx={{ display: 'flex', justifyContent: 'space-between', gap: 1.5, py: 0.5 }}>
             <Box sx={{ minWidth: 0 }}>
@@ -174,10 +214,54 @@ export default function SessionBill() {
         </Box>
       </Paper>
 
+      {!fullyPaid && (
+        <Paper variant="outlined" sx={{ p: 2, borderRadius: 2, mb: 2 }}>
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+              <Sym name="group" size={20} />
+              <Typography variant="body2" fontWeight={800} fontSize={14}>
+                Split Bill with Diners
+              </Typography>
+            </Box>
+            <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+              <Button
+                size="small"
+                aria-label="Fewer diners"
+                disabled={diners <= 1}
+                onClick={() => setDiners((d) => Math.max(1, d - 1))}
+                sx={{ minWidth: 28, height: 28, borderRadius: '50%', bgcolor: '#FAF2EE', color: '#1E1B19', fontWeight: 800 }}
+              >
+                −
+              </Button>
+              <Typography variant="body1" fontWeight={800} fontSize={16} sx={{ minWidth: 20, textAlign: 'center' }}>
+                {diners}
+              </Typography>
+              <Button
+                size="small"
+                aria-label="More diners"
+                disabled={diners >= 10}
+                onClick={() => setDiners((d) => Math.min(10, d + 1))}
+                sx={{ minWidth: 28, height: 28, borderRadius: '50%', bgcolor: '#FAF2EE', color: '#1E1B19', fontWeight: 800 }}
+              >
+                +
+              </Button>
+            </Box>
+          </Box>
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', mt: 1 }}>
+            <Typography variant="body2" fontSize={12} color="text.secondary">
+              Each person pays:
+            </Typography>
+            <Typography variant="body1" fontWeight={800} fontSize={16} sx={{ color: '#9B2F00' }}>
+              ₹{perPerson.toFixed(2)} / person
+            </Typography>
+          </Box>
+        </Paper>
+      )}
+
       {fullyPaid ? (
         <Paper
           variant="outlined"
-          sx={{ p: 2, borderRadius: 3, mb: 2, borderLeft: 4, borderLeftColor: 'success.main' }}
+          sx={{ p: 2, borderRadius: 2, mb: 2, borderLeft: 4, borderLeftColor: 'success.main' }}
         >
           <Typography variant="subtitle1" fontWeight={800} sx={{ letterSpacing: '-0.01em' }} gutterBottom>
             Paid in full — ₹{Number(bill?.totalAmount ?? 0).toFixed(2)}
@@ -192,7 +276,7 @@ export default function SessionBill() {
           </Typography>
         </Paper>
       ) : (
-        <Paper variant="outlined" sx={{ p: 2, borderRadius: 3, mb: 2 }}>
+        <Paper variant="outlined" sx={{ p: 2, borderRadius: 2, mb: 2 }}>
           <Typography variant="subtitle1" fontWeight={800} sx={{ letterSpacing: '-0.01em' }} gutterBottom>
             Payment {paidTotal > 0 ? `(₹${balanceDue.toFixed(2)} remaining)` : ''}
           </Typography>
@@ -246,7 +330,8 @@ export default function SessionBill() {
               fullWidth
               disabled={paying !== null || counterPending !== null || !!phoneError}
               title={phoneError || undefined}
-              sx={{ fontWeight: 800 }}
+              startIcon={<Sym name="bolt" size={20} />}
+              sx={{ fontWeight: 800, height: 56, borderRadius: 2, backgroundImage: 'linear-gradient(90deg, #C2410C, #9B2F00)', justifyContent: 'space-between', px: 2 }}
               onClick={async () => {
                 setPaying('mock');
                 setPayError(null);
@@ -261,7 +346,7 @@ export default function SessionBill() {
                 }
               }}
             >
-              {paying === 'mock' ? 'Paying…' : `Pay ₹${balanceDue.toFixed(2)} Now (Mock UPI)`}
+              {paying === 'mock' ? 'Paying…' : `Pay Now via UPI · ₹${balanceDue.toFixed(2)}`}
             </Button>
             <Button
               variant="outlined"
@@ -293,7 +378,7 @@ export default function SessionBill() {
         </Paper>
       )}
 
-      <Box sx={{ display: 'flex', gap: 1, position: 'sticky', bottom: 12 }}>
+      <Box sx={{ display: 'flex', gap: 1, mb: 12 }}>
         <Button variant="text" fullWidth onClick={() => navigate(withBranch(base))} sx={{ fontWeight: 700, bgcolor: 'background.paper' }}>
           Order More
         </Button>
@@ -301,6 +386,36 @@ export default function SessionBill() {
           Refresh bill
         </Button>
       </Box>
+      <GuestBottomNav
+        base={base}
+        withBranch={withBranch}
+        active="bill"
+        latestOrderId={latestOrderId}
+        onNeedOrder={() => setToast('No live orders yet — fire an order from the menu first.')}
+      />
+      {toast && (
+        <Box
+          sx={{
+            position: 'fixed',
+            bottom: 168,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            zIndex: 60,
+            bgcolor: '#1E1B19',
+            color: '#fff',
+            px: 2.5,
+            py: 1.5,
+            borderRadius: 999,
+            fontSize: 14,
+            fontWeight: 600,
+            whiteSpace: 'nowrap',
+            boxShadow: 4,
+          }}
+          onClick={() => setToast(null)}
+        >
+          {toast}
+        </Box>
+      )}
     </CustomerLayout>
   );
 }

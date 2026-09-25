@@ -1,148 +1,103 @@
-import FiberManualRecordIcon from '@mui/icons-material/FiberManualRecord';
-import { Avatar, Box, Card, Chip, LinearProgress, Typography } from '@mui/material';
+import { Box, Card, Chip, Typography } from '@mui/material';
 
 const STATS = [
-  { label: "Today's revenue", value: '₹24,580', delta: '+18% vs yesterday', live: false },
-  { label: 'Orders today', value: '47', delta: '+9 this hour', live: false },
-  { label: 'Active tables', value: '8/15', delta: 'LIVE', live: true },
-  { label: 'Avg. prep time', value: '12 min', delta: '-2 min this week', live: false },
+  { label: 'Gross Daily Revenue', value: '₹74,850', sub: '+18.4% vs last week', subColor: '#00632B', icon: 'currency_rupee', iconBg: '#FFDBD0', iconColor: '#C2410C' },
+  { label: 'Table Occupancy', value: '18 / 24', sub: '75% Capacity Filled', subColor: '#59413A', icon: 'table_restaurant', iconBg: '#99EFE5', iconColor: '#006A63', dot: '#006A63' },
+  { label: 'Active Kitchen Load', value: '7 Live KOTs', sub: '1 KOT delayed >12m', subColor: '#BA1A1A', icon: 'soup_kitchen', iconBg: '#FFDBD0', iconColor: '#9B2F00' },
+  { label: 'Average Turn Time', value: '38 min', sub: '-9 mins vs paper order', subColor: '#00632B', icon: 'timelapse', iconBg: '#95F8A7', iconColor: '#00632B' },
 ];
 
 const BARS = [
-  ['M', 42], ['T', 55], ['W', 38], ['T', 62], ['F', 78], ['S', 100], ['S', 20],
+  ['Mon', 48], ['Tue', 60], ['Wed', 52], ['Thu', 75], ['Fri', 92], ['Sat', 100], ['Sun', 88],
 ];
 
 const DISHES = [
-  ['Singapore Noodles', 23, 100],
-  ['Paneer Tikka', 18, 78],
-  ['Masala Dosa', 15, 65],
-  ['Iced Tea', 14, 60],
+  { name: 'Paneer Butter Masala', orders: '142 orders', pct: 85, veg: '#15803D' },
+  { name: 'Murgh Dum Biryani', orders: '119 orders', pct: 72, veg: '#BA1A1A' },
+  { name: 'Degree Filter Coffee', orders: '88 orders', pct: 55, veg: '#15803D' },
 ];
 
-const ORDERS = [
-  ['ORD-1047', 'T12', '₹498', 'Preparing', 'warning'],
-  ['ORD-1046', 'T08', '₹850', 'Ready', 'success'],
-  ['ORD-1045', 'T03', '₹340', 'Placed', 'info'],
+const FLOOR = [
+  { t: 'T-01', amt: '₹1,840', sub: '4 Guests • 22m', dot: '#006A63', bold: false },
+  { t: 'T-02', amt: '₹920', sub: '2 Guests • 14m', dot: '#006A63', bold: false },
+  { t: 'T-03', amt: 'Bill Sent', sub: 'UPI QR Split', dot: '#C2410C', bold: true },
+  { t: 'T-04', amt: 'In Cart (3)', sub: 'Ordering...', dot: '#117E3B', bold: false },
+  { t: 'T-05', amt: '₹3,450', sub: '6 Guests • 31m', dot: '#006A63', bold: false },
+  { t: 'T-06', amt: 'Vacant', sub: 'Cleaned', dot: '#E1BFB5', bold: false },
+  { t: 'T-07', amt: 'Delayed', sub: 'KDS 14m+', dot: '#BA1A1A', bold: true, warn: true },
+  { t: 'T-08', amt: '₹1,120', sub: '3 Guests • 9m', dot: '#006A63', bold: false },
 ];
 
-const TABLES = [
-  ['T01', 'empty'], ['T02', 'busy'], ['T03', 'ready'], ['T04', 'empty'],
-  ['T05', 'busy'], ['T06', 'empty'], ['T07', 'busy'], ['T08', 'busy'],
-];
-
-const TABLE_COLOR = {
-  empty: { bg: 'success.main', label: 'Empty' },
-  busy: { bg: 'warning.main', label: 'Busy' },
-  ready: { bg: 'error.main', label: 'Ready!' },
-};
-
-/**
- * Static-but-alive product mock: what an owner sees after setup.
- * Clearly a preview (caption below it says so) — built to make a
- * first-time visitor feel "ok, this is a dashboard" in 3 seconds.
- */
 export default function DashboardMock() {
   return (
-    <Card
-      elevation={0}
-      sx={{
-        borderRadius: { xs: 4, md: 6 },
-        overflow: 'hidden',
-        boxShadow: 6,
-        border: 1,
-        borderColor: 'divider',
-      }}
-    >
-      {/* Browser chrome */}
-      <Box
-        sx={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 1.5,
-          px: 2,
-          py: 1.25,
-          borderBottom: 1,
-          borderColor: 'divider',
-          bgcolor: 'background.default',
-        }}
-      >
+    <Card elevation={0} sx={{ borderRadius: 2, overflow: 'hidden', boxShadow: 8, border: 1, borderColor: 'divider' }}>
+      <Box sx={{ height: 48, bgcolor: '#F4ECE8', px: 2, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <Box sx={{ display: 'flex', gap: 0.75 }}>
           {['#f87171', '#fbbf24', '#34d399'].map((c) => (
-            <Box key={c} sx={{ width: 11, height: 11, borderRadius: '50%', bgcolor: c }} />
+            <Box key={c} sx={{ width: 12, height: 12, borderRadius: '50%', bgcolor: c }} />
           ))}
         </Box>
-        <Box
-          sx={{
-            flexGrow: 1,
-            textAlign: 'center',
-            fontSize: 12,
-            fontFamily: 'monospace',
-            color: 'text.secondary',
-            bgcolor: 'background.paper',
-            border: 1,
-            borderColor: 'divider',
-            borderRadius: 2,
-            py: 0.4,
-            px: 1,
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
-          }}
-        >
-          app.tablepulse.in/admin
+        <Box sx={{ px: 2, py: 0.5, borderRadius: 999, bgcolor: '#E9E1DD', fontSize: 12, color: '#59413A', display: 'flex', alignItems: 'center', gap: 0.75 }}>
+          <Box component="span" className="material-symbols-outlined" sx={{ fontSize: 14 }}>lock</Box>
+          tablepulse.com/admin/live-matrix
         </Box>
-        <Chip
-          size="small"
-          color="success"
-          icon={<FiberManualRecordIcon sx={{ fontSize: '10px !important', animation: 'pulse 1.6s infinite' }} />}
-          label="LIVE PREVIEW"
-          sx={{ fontWeight: 800, '@keyframes pulse': { '50%': { opacity: 0.35 } } }}
-        />
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          <Chip size="small" label="LIVE PREVIEW" sx={{ bgcolor: '#99EFE5', color: '#006F67', fontWeight: 800, fontSize: 10 }} />
+          <Typography variant="body2" color="text.secondary" sx={{ display: { xs: 'none', md: 'block' } }}>
+            Koramangala 4th Block
+          </Typography>
+        </Box>
       </Box>
 
-      <Box sx={{ p: { xs: 2, md: 3 }, display: 'grid', gap: 2 }}>
-        {/* Stat tiles */}
-        <Box sx={{ display: 'grid', gap: 1.5, gridTemplateColumns: { xs: '1fr 1fr', xl: 'repeat(4, 1fr)' } }}>
+      <Box sx={{ p: { xs: 2, sm: 2.5, lg: 3 }, display: 'grid', gap: 2, bgcolor: '#FFF8F5' }}>
+        <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr', lg: 'repeat(4, 1fr)' } }}>
           {STATS.map((s) => (
-            <Box
-              key={s.label}
-              sx={{ p: 1.75, borderRadius: 3, border: 1, borderColor: 'divider', bgcolor: 'background.default' }}
-            >
-              <Typography variant="caption" color="text.secondary" fontWeight={700} sx={{ textTransform: 'uppercase', letterSpacing: 0.6 }}>
-                {s.label}
-              </Typography>
-              <Typography variant="h5" fontWeight={800} sx={{ fontVariantNumeric: 'tabular-nums', my: 0.25 }}>
+              <Box key={s.label} sx={{ bgcolor: '#fff', p: 2, borderRadius: 2, boxShadow: 1 }}>
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                <Typography variant="caption" color="text.secondary" fontWeight={600} fontSize={12}>
+                  {s.label}
+                </Typography>
+                <Box
+                  component="span"
+                  className="material-symbols-outlined"
+                  sx={{ fontSize: 20, color: s.iconColor, bgcolor: s.iconBg, width: 32, height: 32, borderRadius: 2, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                >
+                  {s.icon}
+                </Box>
+              </Box>
+              <Typography variant="h5" fontWeight={800} sx={{ fontSize: 28, mt: 1 }}>
                 {s.value}
               </Typography>
-              <Typography variant="caption" fontWeight={700} color={s.live ? 'error.main' : 'success.main'}>
-                {s.delta}
+              <Typography variant="caption" fontWeight={600} sx={{ color: s.subColor, display: 'flex', alignItems: 'center', gap: 0.5, mt: 0.5 }}>
+                {s.dot && <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: s.dot }} />}
+                {s.sub}
               </Typography>
             </Box>
           ))}
         </Box>
 
-        <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', lg: '1.2fr 1fr 1fr' } }}>
-          {/* Revenue chart */}
-          <Box sx={{ p: 2, borderRadius: 3, border: 1, borderColor: 'divider', bgcolor: 'background.default' }}>
-            <Typography variant="subtitle2" fontWeight={800} gutterBottom>
-              Revenue this week
-            </Typography>
-            <Box sx={{ display: 'flex', alignItems: 'flex-end', gap: 1, height: 110, pt: 1 }}>
+        <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', lg: '2fr 1fr' } }}>
+          <Box sx={{ bgcolor: '#fff', p: { xs: 2, sm: 2.5 }, borderRadius: 2, boxShadow: 1 }}>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 2 }}>
+              <Box>
+                <Typography variant="subtitle1" fontWeight={700} fontSize={18}>7-Day Revenue Velocity</Typography>
+                <Typography variant="body2" color="text.secondary" fontSize={12}>Hourly breakdown showing high lunch & dinner order peaks</Typography>
+              </Box>
+              <Chip size="small" label="Weekly Sync" sx={{ bgcolor: '#F4ECE8', fontSize: 10 }} />
+            </Box>
+            <Box sx={{ height: 176, display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 1, pt: 3 }}>
               {BARS.map(([d, h], i) => (
-                <Box key={i} sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0.5, height: '100%', justifyContent: 'flex-end' }}>
+                <Box key={d} sx={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1, height: '100%', justifyContent: 'flex-end' }}>
                   <Box
                     sx={{
                       width: '100%',
-                      maxWidth: 34,
                       height: `${h}%`,
-                      borderRadius: 1.5,
-                      backgroundImage:
-                        i === 5
-                          ? 'linear-gradient(180deg, #ea580c, #9a3412)'
-                          : 'linear-gradient(180deg, rgba(234,88,12,.45), rgba(234,88,12,.15))',
+                      borderRadius: '6px 6px 0 0',
+                      bgcolor: i >= 4 ? '#C2410C' : '#FFDBD0',
+                      ...(i === 5 && { bgcolor: '#9B2F00', boxShadow: 2 }),
                     }}
                   />
-                  <Typography variant="caption" color="text.secondary">
+                  <Typography variant="caption" color="text.secondary" fontWeight={i >= 4 ? 800 : 400} sx={{ fontSize: 10 }}>
                     {d}
                   </Typography>
                 </Box>
@@ -150,83 +105,75 @@ export default function DashboardMock() {
             </Box>
           </Box>
 
-          {/* Top dishes */}
-          <Box sx={{ p: 2, borderRadius: 3, border: 1, borderColor: 'divider', bgcolor: 'background.default' }}>
-            <Typography variant="subtitle2" fontWeight={800} gutterBottom>
-              🏆 Top dishes today
+          <Box sx={{ bgcolor: '#fff', p: { xs: 2, sm: 2.5 }, borderRadius: 2, boxShadow: 1 }}>
+            <Typography variant="subtitle1" fontWeight={700} fontSize={18} sx={{ mb: 2 }}>
+              Top Performing Items
             </Typography>
-            <Box sx={{ display: 'grid', gap: 1.25, mt: 1 }}>
-              {DISHES.map(([name, count, pct]) => (
-                <Box key={name}>
-                  <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.4 }}>
-                    <Typography variant="body2" fontWeight={600} noWrap>
-                      {name}
-                    </Typography>
-                    <Typography variant="body2" color="text.secondary" sx={{ fontVariantNumeric: 'tabular-nums' }}>
-                      {count}
+            <Box sx={{ display: 'grid', gap: 2 }}>
+              {DISHES.map((dish) => (
+                <Box key={dish.name}>
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.75 }}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                      <Box sx={{ width: 14, height: 14, borderRadius: 1, border: `1.5px solid ${dish.veg}`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        <Box sx={{ width: 6, height: 6, borderRadius: '50%', bgcolor: dish.veg }} />
+                      </Box>
+                      <Typography variant="body2" fontWeight={600} fontSize={12}>{dish.name}</Typography>
+                    </Box>
+                    <Typography variant="caption" fontWeight={800} sx={{ color: '#9B2F00', fontSize: 10 }}>
+                      {dish.orders}
                     </Typography>
                   </Box>
-                  <LinearProgress variant="determinate" value={pct} sx={{ height: 6, borderRadius: 3 }} />
+                  <Box sx={{ height: 8, borderRadius: 999, bgcolor: '#F4ECE8' }}>
+                    <Box sx={{ height: '100%', width: `${dish.pct}%`, borderRadius: 999, bgcolor: '#C2410C' }} />
+                  </Box>
                 </Box>
               ))}
             </Box>
-          </Box>
-
-          {/* Live orders */}
-          <Box sx={{ p: 2, borderRadius: 3, border: 1, borderColor: 'divider', bgcolor: 'background.default' }}>
-            <Typography variant="subtitle2" fontWeight={800} gutterBottom>
-              ⚡ Live orders
-            </Typography>
-            <Box sx={{ display: 'grid', gap: 1, mt: 1 }}>
-              {ORDERS.map(([id, table, amt, status, color]) => (
-                <Box
-                  key={id}
-                  sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 2, bgcolor: 'background.paper', border: 1, borderColor: 'divider' }}
-                >
-                  <Avatar sx={{ width: 30, height: 30, fontSize: 12, fontWeight: 800, bgcolor: 'primary.main' }}>
-                    {table}
-                  </Avatar>
-                  <Box sx={{ flexGrow: 1, minWidth: 0 }}>
-                    <Typography variant="body2" fontWeight={700} sx={{ fontVariantNumeric: 'tabular-nums' }}>
-                      {id}
-                    </Typography>
-                    <Typography variant="caption" color="text.secondary" sx={{ fontVariantNumeric: 'tabular-nums' }}>
-                      {amt}
-                    </Typography>
-                  </Box>
-                  <Chip label={status} size="small" color={color} />
-                </Box>
-              ))}
+            <Box sx={{ mt: 2, p: 1.5, borderRadius: 2, bgcolor: '#FAF2EE', display: 'flex', justifyContent: 'space-between' }}>
+              <Typography variant="body2" color="text.secondary" fontSize={12}>Live Stock 86 Toggle:</Typography>
+              <Typography variant="caption" fontWeight={800} sx={{ color: '#00632B' }}>14 Active Modifiers</Typography>
             </Box>
           </Box>
         </Box>
 
-        {/* Table floor */}
-        <Box sx={{ p: 2, borderRadius: 3, border: 1, borderColor: 'divider', bgcolor: 'background.default' }}>
-          <Typography variant="subtitle2" fontWeight={800} gutterBottom>
-            Floor right now — Koramangala branch
-          </Typography>
-          <Box sx={{ display: 'grid', gap: 1, mt: 1, gridTemplateColumns: { xs: 'repeat(4, 1fr)', md: 'repeat(8, 1fr)' } }}>
-            {TABLES.map(([t, s]) => (
+        <Box sx={{ bgcolor: '#fff', p: { xs: 2, sm: 2.5 }, borderRadius: 2, boxShadow: 1 }}>
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 1, mb: 2 }}>
+            <Box>
+              <Typography variant="subtitle1" fontWeight={700} fontSize={18}>Live Floor Matrix</Typography>
+              <Typography variant="body2" color="text.secondary" fontSize={12}>Floor 1 & Rooftop Patio Live Session Feed</Typography>
+            </Box>
+            <Box sx={{ display: 'flex', gap: 1.5, fontSize: 10, fontWeight: 600, flexWrap: 'wrap' }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}><Box sx={{ width: 10, height: 10, borderRadius: '50%', bgcolor: '#006A63' }} />Occupied (12)</Box>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}><Box sx={{ width: 10, height: 10, borderRadius: '50%', bgcolor: '#C2410C' }} />Billed (4)</Box>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}><Box sx={{ width: 10, height: 10, borderRadius: '50%', bgcolor: '#117E3B' }} />Ordering (2)</Box>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}><Box sx={{ width: 10, height: 10, borderRadius: '50%', bgcolor: '#BA1A1A' }} />KDS Warning (1)</Box>
+            </Box>
+          </Box>
+          <Box sx={{ display: 'grid', gap: 1, gridTemplateColumns: { xs: 'repeat(2, 1fr)', sm: 'repeat(4, 1fr)', lg: 'repeat(8, 1fr)' } }}>
+            {FLOOR.map((f) => (
               <Box
-                key={t}
+                key={f.t}
                 sx={{
-                  textAlign: 'center',
-                  py: 1,
-                  borderRadius: 2,
-                  bgcolor: 'background.paper',
-                  border: 1,
-                  borderColor: 'divider',
+                  p: 1.5,
+                  borderRadius: 3,
+                  bgcolor: f.warn ? 'rgba(186,26,26,0.08)' : '#FAF2EE',
+                  height: 80,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  justifyContent: 'space-between',
                 }}
               >
-                <Box sx={{ display: 'flex', justifyContent: 'center', mb: 0.4 }}>
-                  <Box sx={{ width: 10, height: 10, borderRadius: '50%', bgcolor: TABLE_COLOR[s].bg }} />
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <Typography variant="body2" fontWeight={800} fontSize={12} sx={{ color: f.bold ? '#9B2F00' : 'inherit' }}>
+                    {f.t}
+                  </Typography>
+                  <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: f.dot }} />
                 </Box>
-                <Typography variant="body2" fontWeight={800}>
-                  {t}
+                <Typography variant="body2" fontWeight={800} fontSize={12} sx={{ color: f.bold ? '#9B2F00' : '#006A63' }}>
+                  {f.amt}
                 </Typography>
-                <Typography variant="caption" color="text.secondary">
-                  {TABLE_COLOR[s].label}
+                <Typography variant="caption" color="text.secondary" fontSize={10}>
+                  {f.sub}
                 </Typography>
               </Box>
             ))}

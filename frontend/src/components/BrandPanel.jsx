@@ -1,52 +1,93 @@
-import BoltIcon from '@mui/icons-material/Bolt';
-import PaymentsIcon from '@mui/icons-material/Payments';
 import QrCodeIcon from '@mui/icons-material/QrCode2';
-import { Avatar, Box, Stack, Typography } from '@mui/material';
+import DevicesIcon from '@mui/icons-material/Devices';
+import VolumeUpIcon from '@mui/icons-material/VolumeUp';
+import PercentIcon from '@mui/icons-material/Percent';
+import SoupKitchenIcon from '@mui/icons-material/SoupKitchen';
+import VerifiedIcon from '@mui/icons-material/Verified';
+import { Avatar, Box, Typography } from '@mui/material';
 
-/** Left brand panel for auth screens: gradient, pitch, mini feature list. */
-const POINTS = [
-  { icon: <QrCodeIcon />, title: 'QR menus in minutes', body: 'Print codes, stick them on tables, done.' },
-  { icon: <BoltIcon />, title: 'Orders hit the kitchen live', body: 'Real-time KDS with accept → ready flow.' },
-  { icon: <PaymentsIcon />, title: 'UPI checkout built in', body: 'Razorpay + pay-at-counter, one bill.' },
+const LOGIN_POINTS = [
+  { icon: <QrCodeIcon />, title: 'Instant 400ms QR Menu', body: 'Diners scan acrylic stands, customize items, and fire orders directly to KDS.' },
+  { icon: <SoupKitchenIcon />, title: 'Smart Station Routing', body: 'Real-time KDS dispatch to Tandoor, Curry, and Mocktail bars with countdown clocks.' },
+  { icon: <VolumeUpIcon />, title: 'Soundbox Settlements', body: 'Zero-commission direct UPI collection with Hindi & English instant audio confirmations.' },
 ];
 
-export default function BrandPanel() {
+const REGISTER_POINTS = [
+  { icon: <QrCodeIcon />, title: 'Free Custom QR Acrylic Stands', body: 'Delivered to your doorstep within 48 hours, waterproof & smudge-proof.' },
+  { icon: <PercentIcon />, title: 'Zero Onboarding Fees', body: 'No upfront setup cost or per-order commissions. Keep 100% straight to UPI/Bank.' },
+  { icon: <DevicesIcon />, title: 'Multi-Device Ready', body: 'Runs on Android tablets, captain phones, and ESC/POS thermal kitchen printers.' },
+];
+
+/** Stitch-style terracotta brand panel. variant: login | register */
+export default function BrandPanel({ variant = 'login' }) {
+  const isLogin = variant === 'login';
+  const points = isLogin ? LOGIN_POINTS : REGISTER_POINTS;
+
   return (
     <Box
       sx={{
         height: '100%',
-        minHeight: 520,
-        borderRadius: 5,
+        minHeight: 560,
+        borderRadius: 2,
         p: { xs: 3, md: 4 },
         color: '#fff',
         display: 'flex',
         flexDirection: 'column',
-        justifyContent: 'center',
+        justifyContent: 'space-between',
         gap: 3,
         background:
-          'radial-gradient(120% 90% at 100% 0%, rgba(251,146,60,.55) 0%, rgba(234,88,12,0) 55%), radial-gradient(100% 100% at 0% 100%, rgba(15,118,110,.5) 0%, rgba(15,118,110,0) 50%), linear-gradient(135deg, #7c2d12 0%, #c2410c 55%, #9a3412 100%)',
+          'radial-gradient(120% 90% at 100% 0%, rgba(251,146,60,.35) 0%, rgba(234,88,12,0) 55%), linear-gradient(135deg, #9B2F00 0%, #C2410C 55%, #7C2602 100%)',
         boxShadow: 6,
         position: 'relative',
         overflow: 'hidden',
       }}
     >
       <Box>
-        <Typography variant="overline" sx={{ opacity: 0.85, fontWeight: 700 }}>
-          TablePulse for restaurants
+        <Box
+          sx={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 1,
+            px: 1.5,
+            py: 0.5,
+            borderRadius: 999,
+            bgcolor: 'rgba(255,255,255,.15)',
+            mb: 2,
+          }}
+        >
+          <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: '#95F8A7' }} />
+          <Typography variant="caption" fontWeight={700} sx={{ letterSpacing: '.08em' }}>
+            {isLogin ? 'RESTAURANT OS & QR CLOUD' : 'JOIN 400+ RESTAURANTS'}
+          </Typography>
+        </Box>
+        <Typography variant="h4" component="p" sx={{ fontWeight: 800, lineHeight: 1.15 }}>
+          {isLogin ? (
+            <>Run high-turnover dining rooms with zero lag.</>
+          ) : (
+            <>Launch your QR dining and cloud kitchen in 15 minutes.</>
+          )}
         </Typography>
-        <Typography variant="h4" component="p" sx={{ mt: 1, fontWeight: 800 }}>
-          Every table,
-          <br />
-          an instant ordering station.
-        </Typography>
-        <Typography variant="body2" sx={{ mt: 1, opacity: 0.9 }}>
-          Scan → order → kitchen → pay. No app download, no waiting for waiters.
-        </Typography>
+        {!isLogin && (
+          <Typography variant="body2" sx={{ mt: 1, opacity: 0.9 }}>
+            Engineered for high-velocity Indian eateries, dhabas, and premium cafes.
+          </Typography>
+        )}
       </Box>
-      <Stack spacing={2}>
-        {POINTS.map((p) => (
-          <Box key={p.title} sx={{ display: 'flex', gap: 1.5, alignItems: 'flex-start' }}>
-            <Avatar sx={{ bgcolor: 'rgba(255,255,255,.18)', width: 40, height: 40, borderRadius: 3 }}>
+
+      <Box sx={{ display: 'grid', gap: 1.5 }}>
+        {points.map((p) => (
+          <Box
+            key={p.title}
+            sx={{
+              display: 'flex',
+              gap: 1.5,
+              alignItems: 'flex-start',
+              p: 1.75,
+              borderRadius: 2,
+              bgcolor: 'rgba(255,255,255,.1)',
+            }}
+          >
+            <Avatar sx={{ bgcolor: 'rgba(255,255,255,.15)', width: 40, height: 40, borderRadius: 3 }}>
               {p.icon}
             </Avatar>
             <Box>
@@ -59,10 +100,28 @@ export default function BrandPanel() {
             </Box>
           </Box>
         ))}
-      </Stack>
-      <Typography variant="caption" sx={{ opacity: 0.75 }}>
-        Loved by busy cafés, restro-bars and cloud kitchens.
-      </Typography>
+      </Box>
+
+      <Box
+        sx={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 1,
+          px: 2,
+          py: 1.5,
+          borderRadius: 3,
+          bgcolor: 'rgba(255,255,255,.15)',
+        }}
+      >
+        <VerifiedIcon fontSize="small" />
+        <Typography variant="body2" fontWeight={600}>
+          {isLogin ? (
+            <>Processed over <strong>₹5.2 Cr+</strong> across 400+ Indian bistros & dhabas</>
+          ) : (
+            <>4.9/5 Pilot Rating — turnaround dropped by 22 mins at Indiranagar outlet</>
+          )}
+        </Typography>
+      </Box>
     </Box>
   );
 }

@@ -8,7 +8,7 @@ import { createTheme } from '@mui/material/styles';
 const FONT = '"Plus Jakarta Sans", system-ui, "Segoe UI", Roboto, "Noto Sans", sans-serif';
 
 const COMMON = {
-  shape: { borderRadius: 16 },
+  shape: { borderRadius: 8 },
   typography: {
     fontFamily: FONT,
     h1: { fontWeight: 800, letterSpacing: '-0.03em', lineHeight: 1.05 },
@@ -33,7 +33,7 @@ const COMMON = {
     MuiButton: {
       defaultProps: { disableElevation: true },
       styleOverrides: {
-        root: { textTransform: 'none', fontWeight: 700, minHeight: 44, borderRadius: 12 },
+        root: { textTransform: 'none', fontWeight: 700, minHeight: 44, borderRadius: 8 },
         containedPrimary: {
           backgroundImage: 'linear-gradient(135deg, #ea580c 0%, #c2410c 100%)',
         },
@@ -43,7 +43,7 @@ const COMMON = {
     MuiCard: {
       styleOverrides: {
         root: ({ theme }) => ({
-          borderRadius: 20,
+          borderRadius: 12,
           border: `1px solid ${theme.palette.divider}`,
         }),
       },
@@ -51,8 +51,8 @@ const COMMON = {
     MuiChip: { styleOverrides: { root: { fontWeight: 600 } } },
     MuiSkeleton: {
       styleOverrides: {
-        root: { borderRadius: 12 },
-        text: { borderRadius: 6 },
+        root: { borderRadius: 8 },
+        text: { borderRadius: 4 },
       },
     },
     MuiAccordion: {
@@ -101,10 +101,10 @@ const COMMON = {
 const PALETTES = {
   light: {
     mode: 'light',
-    primary: { main: '#c2410c', light: '#ea580c', dark: '#9a3412', contrastText: '#fff' },
-    secondary: { main: '#0f766e', light: '#14b8a6', dark: '#115e59', contrastText: '#fff' },
-    background: { default: '#faf7f2', paper: '#ffffff' },
-    text: { primary: '#1c1917', secondary: '#78716c' },
+    primary: { main: '#9b2f00', light: '#c2410c', dark: '#7c2602', contrastText: '#fff' },
+    secondary: { main: '#006a63', light: '#14b8a6', dark: '#115e59', contrastText: '#fff' },
+    background: { default: '#fff8f5', paper: '#ffffff' },
+    text: { primary: '#1e1b19', secondary: '#59413a' },
     divider: 'rgba(28, 25, 23, 0.08)',
     success: { main: '#15803d' },
     warning: { main: '#b45309' },

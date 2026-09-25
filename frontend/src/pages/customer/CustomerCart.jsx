@@ -13,6 +13,7 @@ import {
 } from '@mui/material';
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { GuestBottomNav, GuestHeader } from '../../components/guest/GuestChrome.jsx';
 import CustomerLayout from '../../components/layout/CustomerLayout.jsx';
 import EmptyState from '../../components/EmptyState.jsx';
 import { CartProvider, useCart } from '../../context/CartContext.jsx';
@@ -91,7 +92,7 @@ function CartInner() {
   if (sessionLoading) {
     return (
       <CustomerLayout title="Loading cart…">
-        <Paper variant="outlined" sx={{ borderRadius: 3, overflow: 'hidden', mb: 2 }}>
+        <Paper variant="outlined" sx={{ borderRadius: 2, overflow: 'hidden', mb: 2 }}>
           {[0, 1, 2].map((i) => (
             <Box key={i} sx={{ p: 2, borderBottom: i === 2 ? 0 : 1, borderColor: 'divider' }}>
               <Skeleton variant="text" width="60%" height={24} />
@@ -116,7 +117,9 @@ function CartInner() {
 
   if (lines.length === 0) {
     return (
-      <CustomerLayout title={`Table ${table} · Cart`} subtitle={restaurant?.name}>
+      <CustomerLayout>
+        <GuestHeader restaurantName={restaurant?.name ?? '…'} tableLabel={`Table ${table}`} />
+        <Box sx={{ height: 80 }} />
         <EmptyState
           icon="🛒"
           title="Your cart is empty"
@@ -124,19 +127,29 @@ function CartInner() {
           actionLabel="Browse menu"
           onAction={() => navigate(withBranch(base))}
         />
+        <Box sx={{ pb: 12 }} />
+        <GuestBottomNav base={base} withBranch={withBranch} />
       </CustomerLayout>
     );
   }
 
   return (
-    <CustomerLayout title={`Table ${table} · Cart`} subtitle={restaurant?.name ?? slug}>
+    <CustomerLayout>
+      <GuestHeader restaurantName={restaurant?.name ?? '…'} tableLabel={`Table ${table}`} />
+      <Box sx={{ height: 80 }} />
+      <Typography variant="h6" fontWeight={800} fontSize={18} sx={{ mb: 0.25 }}>
+        Review your cart
+      </Typography>
+      <Typography variant="caption" fontSize={10} color="text.secondary" sx={{ display: 'block', mb: 2 }}>
+        {totals.count} item{totals.count === 1 ? '' : 's'} · Table {table}
+      </Typography>
       {error && (
         <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>
           {error}
         </Alert>
       )}
 
-      <Paper variant="outlined" sx={{ borderRadius: 3, overflow: 'hidden', mb: 2 }}>
+      <Paper variant="outlined" sx={{ borderRadius: 2, overflow: 'hidden', mb: 2 }}>
         {lines.map((l, idx) => (
           <Box
             key={l.key}
@@ -203,7 +216,7 @@ function CartInner() {
         sx={{ mb: 2 }}
       />
 
-      <Paper variant="outlined" sx={{ p: 2, borderRadius: 3, mb: 2, bgcolor: 'background.paper' }}>
+      <Paper variant="outlined" sx={{ p: 2, borderRadius: 2, mb: 2, bgcolor: 'background.paper' }}>
         <Box sx={{ display: 'grid', gap: 0.5 }}>
           <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
             <Typography variant="body2" color="text.secondary">Subtotal</Typography>
@@ -231,17 +244,43 @@ function CartInner() {
         </Box>
       </Paper>
 
-      <Paper variant="outlined" sx={{ position: 'sticky', bottom: 12, p: 1.25, borderRadius: 3, display: 'flex', gap: 1, zIndex: 10 }}>
-        <Button variant="text" onClick={() => navigate(withBranch(base))} sx={{ flexShrink: 0, fontWeight: 700 }}>
-          + Add
-        </Button>
-        <Button variant="contained" fullWidth disabled={placing} onClick={handlePlace} sx={{ borderRadius: 2.5, fontWeight: 800 }}>
-          {placing ? 'Placing…' : `Place Order · ₹${total.toFixed(2)}`}
+      <Paper
+        elevation={8}
+        sx={{
+          position: 'sticky',
+          bottom: 96,
+          p: 1.25,
+          pl: 2,
+          borderRadius: 2,
+          display: 'flex',
+          gap: 1,
+          zIndex: 10,
+          backgroundImage: 'linear-gradient(90deg, #9B2F00, #C2410C)',
+          color: '#fff',
+          alignItems: 'center',
+        }}
+      >
+        <Box sx={{ flexGrow: 1 }}>
+          <Typography variant="subtitle2" fontWeight={800} sx={{ fontVariantNumeric: 'tabular-nums' }}>
+            {totals.count} item{totals.count === 1 ? '' : 's'} · ₹{total.toFixed(0)}
+          </Typography>
+          <Typography variant="caption" fontSize={10} sx={{ color: '#FFDBD0' }}>
+            GST included · fires KOT instantly
+          </Typography>
+        </Box>
+        <Button
+          variant="contained"
+          disabled={placing}
+          onClick={handlePlace}
+          sx={{ bgcolor: '#fff', color: '#9B2F00', backgroundImage: 'none', borderRadius: 2, fontWeight: 800, '&:hover': { bgcolor: '#FFF5ED' } }}
+        >
+          {placing ? 'Placing…' : 'Fire KOT →'}
         </Button>
       </Paper>
-      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', textAlign: 'center', mt: 1.5 }}>
+      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', textAlign: 'center', mt: 1.5, pb: 12 }}>
         Prices locked at order time · kitchen gets modifiers + notes instantly
       </Typography>
+      <GuestBottomNav base={base} withBranch={withBranch} cart={totals} />
     </CustomerLayout>
   );
 }

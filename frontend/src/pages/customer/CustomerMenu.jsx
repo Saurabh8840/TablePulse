@@ -7,6 +7,7 @@ import {
   Accordion,
   AccordionDetails,
   AccordionSummary,
+  Avatar,
   Box,
   Button,
   Chip,
@@ -15,12 +16,11 @@ import {
   Paper,
   Skeleton,
   TextField,
-  ToggleButton,
-  ToggleButtonGroup,
   Typography,
 } from '@mui/material';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { GuestBottomNav, GuestHeader, SessionSheet, Sym } from '../../components/guest/GuestChrome.jsx';
 import CustomerLayout from '../../components/layout/CustomerLayout.jsx';
 import EmptyState from '../../components/EmptyState.jsx';
 import VegMark from '../../components/VegMark.jsx';
@@ -29,23 +29,22 @@ import { useSession } from '../../hooks/useSession.js';
 import { getPublicMenu, listSessionOrders } from '../../services/ordering.js';
 import ItemModal from './ItemModal.jsx';
 
-/** First-load shimmer mirroring the photo-card heights — zero layout shift. */
+/** First-load shimmer mirroring the item rows — zero layout shift. */
 function MenuSkeleton() {
   return (
     <Box sx={{ py: 1.5 }}>
       <Skeleton variant="rounded" height={120} sx={{ mb: 1.5 }} />
       <Skeleton variant="text" width="40%" height={28} sx={{ mb: 1 }} />
-      <Box sx={{ display: 'grid', gap: '10px', gridTemplateColumns: { xs: '1fr 1fr', sm: '1fr 1fr 1fr', lg: '1fr 1fr 1fr 1fr' } }}>
-        {[0, 1, 2, 3, 4, 5].map((i) => (
-          <Box key={i} sx={{ borderRadius: 3, overflow: 'hidden', border: 1, borderColor: 'divider' }}>
-            <Skeleton variant="rectangular" height={0} sx={{ aspectRatio: '16 / 10' }} />
-            <Box sx={{ p: 1.25 }}>
-              <Skeleton variant="text" width="70%" height={22} />
-              <Skeleton variant="text" width="45%" height={20} />
-            </Box>
+      {[0, 1, 2, 3].map((i) => (
+        <Box key={i} sx={{ display: 'flex', gap: 2, py: 2, borderBottom: 1, borderColor: 'divider' }}>
+          <Skeleton variant="rounded" width={145} height={116} sx={{ flexShrink: 0 }} />
+          <Box sx={{ flexGrow: 1 }}>
+            <Skeleton variant="text" width="60%" height={26} />
+            <Skeleton variant="text" width="35%" height={22} />
+            <Skeleton variant="text" width="95%" height={18} />
           </Box>
-        ))}
-      </Box>
+        </Box>
+      ))}
     </Box>
   );
 }
@@ -119,6 +118,87 @@ function DishStepper({ qty, disabled, onAdd, onDec }) {
   );
 }
 
+/** Guest dish card: info left, photo right, price + ADD/stepper footer. */
+function ItemRow({ item, qty, onAdd, onDec, onCustomise }) {
+  const customisable = (item.modifierGroups ?? []).length > 0;
+  const groups = item.modifierGroups ?? [];
+  const sizeGroup = groups.find((g) => g.required && g.maxSelections === 1 && (g.options ?? []).length > 1);
+  return (
+    <Box
+      sx={{
+        bgcolor: item.available ? 'background.paper' : '#FAF2EE',
+        borderRadius: 2,
+        p: 2,
+        mb: 1.5,
+        boxShadow: 1,
+        opacity: item.available ? 1 : 0.85,
+      }}
+    >
+      <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'flex-start', justifyContent: 'space-between' }}>
+        <Box sx={{ flexGrow: 1, minWidth: 0 }}>
+          <Box sx={{ display: 'flex', gap: 0.75, alignItems: 'center' }}>
+            <VegMark veg={!!item.vegetarian} size={14} />
+            {!item.available && (
+              <Chip size="small" label="Sold Out" sx={{ height: 22, fontSize: 10, fontWeight: 800, bgcolor: '#EEE7E3' }} />
+            )}
+          </Box>
+          <Typography variant="h6" fontWeight={700} fontSize={18} sx={{ pt: 0.5, lineHeight: 1.25 }}>
+            {item.name}
+          </Typography>
+          {item.description && (
+            <Typography variant="body2" fontSize={12} color="text.secondary" className="clamp-2" sx={{ mt: 0.25 }}>
+              {item.description}
+            </Typography>
+          )}
+          {customisable && (
+            <Typography variant="caption" fontSize={10} color="primary.main" fontWeight={600} sx={{ display: 'block', mt: 0.5 }}>
+              Customizable portion (Half / Full)
+            </Typography>
+          )}
+        </Box>
+        <Box sx={{
+          width: 96, height: 96, flexShrink: 0,
+          borderRadius: 2, overflow: 'hidden', bgcolor: 'action.hover',
+          border: 1, borderColor: 'divider', position: 'relative',
+        }}>
+          <Box sx={{ position: 'absolute', inset: 0, filter: item.available ? 'none' : 'grayscale(0.7)' }}>
+            <DishPhoto item={item} />
+          </Box>
+        </Box>
+      </Box>
+      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', pt: 1 }}>
+        <Typography variant="h6" fontWeight={800} fontSize={20} sx={{ color: '#9B2F00', fontVariantNumeric: 'tabular-nums' }}>
+          {sizeGroup
+            ? <>From ₹{Number(item.price).toFixed(0)}
+              <Typography component="span" variant="caption" color="text.secondary" sx={{ fontWeight: 400 }}>
+                {' '}· up to ₹{(Number(item.price) + Math.max(...sizeGroup.options.map((o) => Number(o.additionalPrice ?? 0)))).toFixed(0)}
+              </Typography></>
+            : <>₹{Number(item.price).toFixed(0)}</>}
+          {item.preparationTimeMinutes ? (
+            <Typography component="span" variant="caption" color="text.secondary" sx={{ ml: 0.75, fontWeight: 400 }}>
+              ~{item.preparationTimeMinutes} min
+            </Typography>
+          ) : null}
+        </Typography>
+        {!item.available ? (
+          <Chip size="small" label="Unavailable" sx={{ fontWeight: 700 }} />
+        ) : customisable ? (
+          <Button
+            size="small"
+            variant="contained"
+            onClick={onCustomise}
+            sx={{ height: 40, px: 2, borderRadius: 2, fontWeight: 800, backgroundImage: 'linear-gradient(90deg, #C2410C, #9B2F00)' }}
+          >
+            + ADD
+          </Button>
+        ) : (
+          <DishStepper qty={qty} disabled={false} onAdd={onAdd} onDec={onDec} />
+        )}
+      </Box>
+    </Box>
+  );
+}
+
 function MenuInner() {
   const { slug, table } = useParams();
   const [searchParams] = useSearchParams();
@@ -136,6 +216,11 @@ function MenuInner() {
   const [selected, setSelected] = useState(null);
   const [sessionOrders, setSessionOrders] = useState([]);
   const [ordersOpen, setOrdersOpen] = useState(false);
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const [toast, setToast] = useState(null);
+  const sectionRefs = useRef({});
+  const searchBoxRef = useRef(null);
+  const searchInputRef = useRef(null);
 
   useEffect(() => {
     let alive = true;
@@ -184,23 +269,61 @@ function MenuInner() {
     [categories],
   );
 
-  const visibleItems = useMemo(() => {
+  const itemVisible = (item) => {
     const q = query.trim().toLowerCase();
-    const out = [];
-    for (const c of categories) {
-      if (activeCat && c.id !== activeCat) continue;
-      for (const item of c.items ?? []) {
-        if (diet === 'veg' && !item.vegetarian) continue;
-        if (diet === 'nonveg' && item.vegetarian) continue;
-        if (q && !`${item.name} ${item.description ?? ''}`.toLowerCase().includes(q)) continue;
-        out.push({ ...item, _catName: c.name });
-      }
-    }
-    return out;
-  }, [categories, activeCat, query, diet]);
+    if (diet === 'veg' && !item.vegetarian) return false;
+    if (diet === 'nonveg' && item.vegetarian) return false;
+    if (q && !`${item.name} ${item.description ?? ''}`.toLowerCase().includes(q)) return false;
+    return true;
+  };
+
+  /** Categories with ≥1 visible item — drives sidebar + sections together. */
+  const visibleCats = useMemo(
+    () => categories
+      .map((c) => ({ ...c, visible: (c.items ?? []).filter(itemVisible) }))
+      .filter((c) => c.visible.length > 0),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [categories, query, diet],
+  );
+  const visibleCount = useMemo(
+    () => visibleCats.reduce((n, c) => n + c.visible.length, 0),
+    [visibleCats],
+  );
+
+  // Scroll-spy: highlight the section currently in view.
+  useEffect(() => {
+    const obs = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) {
+          if (e.isIntersecting) setActiveCat(e.target.dataset.catId);
+        }
+      },
+      { rootMargin: '-25% 0px -65% 0px' },
+    );
+    const nodes = Object.values(sectionRefs.current).filter(Boolean);
+    nodes.forEach((el) => obs.observe(el));
+    return () => obs.disconnect();
+  }, [visibleCats]);
+
+  function scrollToCat(id) {
+    setActiveCat(id);
+    sectionRefs.current[id]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
 
   const withBranch = (path) => (branchId ? `${path}?b=${encodeURIComponent(branchId)}` : path);
   const base = `/r/${slug}/t/${table}`;
+
+  const latestOrderId = useMemo(() => {
+    const sorted = [...sessionOrders].sort((a, b) => new Date(b.placedAt) - new Date(a.placedAt));
+    return sorted[0]?.id ?? null;
+  }, [sessionOrders]);
+
+  const marqueeDishes = useMemo(
+    () => categories.flatMap((c) => c.items ?? []).slice(0, 3).map((i) => i.name),
+    [categories],
+  );
+
+  const cycleDiet = () => setDiet((d) => (d === 'all' ? 'veg' : d === 'veg' ? 'nonveg' : 'all'));
 
   function handleAdd(item) {
     if ((item.modifierGroups ?? []).length > 0) {
@@ -254,7 +377,19 @@ function MenuInner() {
 
   return (
     <CustomerLayout wide>
-      {/* ── Restaurant hero: quiet paper, monogram, no imagery ── */}
+      <GuestHeader
+        restaurantName={restaurant?.name}
+        tableLabel={`Table ${table}`}
+        onSearch={() => {
+          searchBoxRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          setTimeout(() => searchInputRef.current?.focus(), 350);
+        }}
+        diet={diet}
+        onDiet={cycleDiet}
+        onPerson={() => setSheetOpen(true)}
+      />
+      <Box sx={{ height: 80 }} />
+      {/* ── Welcome hero ── */}
       <Paper
         elevation={0}
         sx={{
@@ -262,10 +397,26 @@ function MenuInner() {
           mb: 0,
           border: 1,
           borderColor: 'divider',
-          borderRadius: { xs: 3, md: 4 },
+          borderRadius: 2,
           overflow: 'hidden',
+          position: 'relative',
         }}
       >
+        <Box sx={{ position: 'absolute', right: -40, bottom: -40, width: 176, height: 176, borderRadius: '50%', bgcolor: 'rgba(255,219,208,.3)', filter: 'blur(32px)' }} />
+        {restaurant?.coverUrl && (
+          <Box sx={{ position: 'relative', height: { xs: 140, md: 180 }, overflow: 'hidden' }}>
+            <Box
+              component="img"
+              src={restaurant.coverUrl}
+              alt=""
+              aria-hidden
+              loading="eager"
+              decoding="async"
+              sx={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+            />
+            <Box sx={{ position: 'absolute', inset: 0, background: 'linear-gradient(to top, rgba(255,248,245,.96) 0%, rgba(255,248,245,.25) 45%, transparent 75%)' }} />
+          </Box>
+        )}
         <Box sx={{ p: { xs: 2, md: 3 }, pb: { xs: 1.5, md: 2 } }}>
           <Box sx={{ display: 'flex', gap: 1.75, alignItems: 'flex-start' }}>
             <Box
@@ -274,10 +425,10 @@ function MenuInner() {
                 width: { xs: 52, md: 64 },
                 height: { xs: 52, md: 64 },
                 flexShrink: 0,
-                borderRadius: 3,
+                borderRadius: 2,
                 border: 1,
                 borderColor: 'divider',
-                bgcolor: 'action.hover',
+                bgcolor: '#fff',
                 color: 'primary.main',
                 display: 'flex',
                 alignItems: 'center',
@@ -285,9 +436,14 @@ function MenuInner() {
                 fontWeight: 800,
                 fontSize: { xs: 24, md: 30 },
                 letterSpacing: '-0.02em',
+                overflow: 'hidden',
               }}
             >
-              {(restaurant?.name?.[0] ?? 'T').toUpperCase()}
+              {restaurant?.logoUrl ? (
+                <Box component="img" src={restaurant.logoUrl} alt="" sx={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+              ) : (
+                (restaurant?.name?.[0] ?? 'T').toUpperCase()
+              )}
             </Box>
             <Box sx={{ flexGrow: 1, minWidth: 0 }}>
               <Typography variant="h5" fontWeight={800} sx={{ fontSize: { xs: 21, md: 28 }, letterSpacing: '-0.02em', lineHeight: 1.2 }}>
@@ -308,6 +464,17 @@ function MenuInner() {
                   {restaurant.description}
                 </Typography>
               )}
+              {marqueeDishes.length > 0 && (
+                <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', mt: 1.25, p: 1.25, borderRadius: 2, bgcolor: 'rgba(255,255,255,.7)' }}>
+                  <Avatar sx={{ bgcolor: '#C2410C', width: 24, height: 24 }}>
+                    <Sym name="local_fire_department" size={14} />
+                  </Avatar>
+                  <Typography variant="body2" fontWeight={700} fontSize={12} noWrap sx={{ flexGrow: 1, color: '#9B2F00' }}>
+                    Today at {restaurant?.name}: {marqueeDishes.join(' · ')}
+                  </Typography>
+                  <Chip size="small" label="Today" sx={{ fontSize: 10, fontWeight: 800, color: '#9B2F00' }} />
+                </Box>
+              )}
             </Box>
             <Chip
               label={`Table ${table}`}
@@ -322,56 +489,64 @@ function MenuInner() {
           className="sticky-bar"
           sx={{ bgcolor: 'background.paper', p: { xs: 1.25, md: 1.5 }, borderTop: 1, borderColor: 'divider' }}
         >
-          <Box sx={{ display: 'flex', gap: 1, mb: 1 }}>
+          <Box ref={searchBoxRef} sx={{ scrollMarginTop: 150, display: 'flex', gap: 1, mb: 1 }}>
             <TextField
               size="small"
               fullWidth
-              placeholder="Search noodles, coffee, paneer…"
+              placeholder="Search butter chicken, parotta, mocktails..."
               value={query}
               onChange={(e) => setQuery(e.target.value)}
+              inputRef={searchInputRef}
               InputProps={{
                 startAdornment: (
                   <InputAdornment position="start">
                     <SearchIcon fontSize="small" />
                   </InputAdornment>
                 ),
-                sx: { borderRadius: 3, bgcolor: 'action.hover' },
+                endAdornment: query ? (
+                  <InputAdornment position="end">
+                    <IconButton size="small" aria-label="Clear search" onClick={() => setQuery('')}>
+                      <Sym name="close" size={16} />
+                    </IconButton>
+                  </InputAdornment>
+                ) : null,
+                sx: { borderRadius: 2, bgcolor: 'action.hover', height: 48 },
               }}
             />
-            <ToggleButtonGroup
-              size="small"
-              exclusive
-              value={diet}
-              onChange={(_, v) => v && setDiet(v)}
-              aria-label="diet filter"
-              sx={{ flexShrink: 0, '& .MuiToggleButton-root': { borderRadius: 3, px: 1.25 } }}
-            >
-              <ToggleButton value="all">All</ToggleButton>
-              <ToggleButton value="veg" aria-label="veg only">
-                <VegMark veg size={14} />
-              </ToggleButton>
-              <ToggleButton value="nonveg" aria-label="non-veg only">
-                <VegMark veg={false} size={14} />
-              </ToggleButton>
-            </ToggleButtonGroup>
           </Box>
-          <Box className="no-scrollbar" sx={{ display: 'flex', gap: 1, overflowX: 'auto', pb: 0.25 }}>
-            <Chip
-              label={`All (${itemCount})`}
-              clickable
-              variant={activeCat === null ? 'filled' : 'outlined'}
-              color={activeCat === null ? 'primary' : 'default'}
-              onClick={() => setActiveCat(null)}
-              sx={{ flexShrink: 0, fontWeight: 700 }}
-            />
-            {categories.map((c) => (
+          <Box className="no-scrollbar" sx={{ display: 'flex', gap: 1, overflowX: 'auto', pb: 0.25, mb: 1 }}>
+            {[
+              ['veg', 'Veg Only', true],
+              ['nonveg', 'Non-Veg', false],
+            ].map(([v, l, veg]) => (
+              <Chip
+                key={v}
+                clickable
+                onClick={() => setDiet((d) => (d === v ? 'all' : v))}
+                icon={<VegMark veg={veg} size={12} />}
+                label={l}
+                sx={diet === v
+                  ? { bgcolor: '#9B2F00', color: '#fff', fontWeight: 800, fontSize: 12, height: 40, px: 1, '& .MuiChip-icon': { color: '#fff' } }
+                  : { bgcolor: '#fff', fontWeight: 600, fontSize: 12, height: 40, px: 1, boxShadow: 1 }}
+              />
+            ))}
+            {diet !== 'all' && (
+              <Chip clickable onClick={() => setDiet('all')} label="Clear ×" sx={{ fontSize: 12, height: 40 }} />
+            )}
+          </Box>
+          {/* Mobile category scroller — desktop uses the sticky sidebar below */}
+          <Box
+            className="no-scrollbar"
+            sx={{ display: { xs: 'flex', md: 'none' }, gap: 1, overflowX: 'auto', pb: 0.25 }}
+          >
+            {visibleCats.map((c) => (
               <Chip
                 key={c.id}
-                label={`${c.name} (${c.items?.length ?? 0})`}
+                label={`${c.name} (${c.visible.length})`}
                 clickable
                 color={activeCat === c.id ? 'primary' : 'default'}
                 variant={activeCat === c.id ? 'filled' : 'outlined'}
-                onClick={() => setActiveCat(c.id)}
+                onClick={() => scrollToCat(c.id)}
                 sx={{ flexShrink: 0, fontWeight: 700 }}
               />
             ))}
@@ -387,7 +562,7 @@ function MenuInner() {
           return m;
         }, {});
         return (
-          <Paper variant="outlined" sx={{ mt: 1.5, p: 1.5, borderRadius: 3 }}>
+          <Paper variant="outlined" sx={{ mt: 1.5, p: 1.5, borderRadius: 2 }}>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
               <ReceiptLongIcon fontSize="small" color="primary" />
               <Box sx={{ flexGrow: 1, minWidth: 0 }}>
@@ -440,131 +615,87 @@ function MenuInner() {
         );
       })()}
 
-      {/* ── Photo cards: appetising, calm, reserved ratios ── */}
+      {/* ── Category sidebar (desktop) + stacked sections ── */}
       <Box sx={{ py: 1.5 }}>
         <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1, px: 0.5 }}>
-          {visibleItems.length} dish{visibleItems.length === 1 ? '' : 'es'}
-          {activeCat ? ` · ${categories.find((c) => c.id === activeCat)?.name ?? ''}` : ' · Full menu'}
+          {visibleCount} dish{visibleCount === 1 ? '' : 'es'} · Full menu
         </Typography>
-        {visibleItems.length === 0 ? (
+        {visibleCats.length === 0 ? (
           <EmptyState icon="🍽️" title="No items found" body="Try a different search or category." />
         ) : (
-          <Box
-            sx={{
-              display: 'grid', gap: '10px',
-              gridTemplateColumns: { xs: '1fr 1fr', sm: '1fr 1fr 1fr', lg: '1fr 1fr 1fr 1fr' },
-              pb: totals.count > 0 ? 12 : 2,
-            }}
-          >
-            {visibleItems.map((item) => {
-              const customisable = (item.modifierGroups ?? []).length > 0;
-              const qty = customisable ? 0 : simpleQty(item.id);
-              return (
-              <Paper
-                key={item.id}
-                variant="outlined"
-                sx={{
-                  borderRadius: 3, overflow: 'hidden',
-                  display: 'flex', flexDirection: 'column',
-                  opacity: item.available ? 1 : 0.75,
-                  transition: 'transform .18s ease, box-shadow .18s ease',
-                  '&:hover': {
-                    boxShadow: 4,
-                    transform: { xs: 'none', sm: 'translateY(-3px)' },
-                    '& .dish-photo': { transform: 'scale(1.06)' },
-                  },
-                  '&:active': { transform: { xs: 'scale(0.99)', sm: 'translateY(-1px)' } },
-                }}
-              >
-                {/* Photo — fixed ratio reserves space, no layout shift */}
-                <Box sx={{ position: 'relative', aspectRatio: '16 / 10', bgcolor: 'action.hover' }}>
-                  <Box sx={{ position: 'absolute', inset: 0, filter: item.available ? 'none' : 'grayscale(0.7)' }}>
-                    <DishPhoto item={item} />
+          <Box sx={{ display: 'flex', gap: 3, alignItems: 'flex-start', pb: 2 }}>
+            {/* Sticky sidebar — desktop only */}
+            <Box
+              component="nav"
+              aria-label="Menu categories"
+              sx={{
+                display: { xs: 'none', md: 'block' },
+                width: 250, flexShrink: 0,
+                position: 'sticky', top: 150,
+                maxHeight: 'calc(100vh - 170px)', overflowY: 'auto',
+                borderRight: 1, borderColor: 'divider', pr: 1.5, py: 0.5,
+              }}
+            >
+              {visibleCats.map((c) => {
+                const active = activeCat === c.id;
+                return (
+                  <Box
+                    key={c.id}
+                    onClick={() => scrollToCat(c.id)}
+                    sx={{
+                      display: 'flex', alignItems: 'baseline', gap: 1,
+                      px: 1.25, py: 1.1, borderRadius: 2, cursor: 'pointer',
+                      borderLeft: 3, borderColor: active ? 'primary.main' : 'transparent',
+                      bgcolor: active ? 'action.hover' : 'transparent',
+                      transition: 'background-color .15s',
+                      '&:hover': { bgcolor: 'action.hover' },
+                    }}
+                  >
+                    <Typography
+                      variant="body2"
+                      fontWeight={active ? 800 : 500}
+                      color={active ? 'primary.main' : 'text.primary'}
+                      sx={{ flexGrow: 1 }}
+                    >
+                      {c.name}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary" sx={{ fontVariantNumeric: 'tabular-nums' }}>
+                      {c.visible.length}
+                    </Typography>
                   </Box>
-                  {!item.available && (
-                    <Chip size="small" label="Sold out" color="warning" sx={{ position: 'absolute', top: 8, left: 8 }} />
-                  )}
-                  {/* Floating control overlapping the photo's bottom edge */}
-                  <Box sx={{ position: 'absolute', left: 0, right: 0, bottom: 0, transform: 'translateY(50%)', display: 'flex', justifyContent: 'center', zIndex: 1 }}>
-                    {!item.available ? null : customisable ? (
-                      <Button
-                        size="small"
-                        variant="outlined"
-                        onClick={() => setSelected(item)}
-                        sx={{ borderRadius: 20, fontWeight: 700, whiteSpace: 'nowrap', bgcolor: 'background.paper', boxShadow: 1, transition: 'transform .12s ease, box-shadow .15s ease', '&:hover': { boxShadow: 2 }, '&:active': { transform: 'scale(0.94)' } }}
-                      >
-                        Customise
-                      </Button>
-                    ) : (
-                      <DishStepper
-                        qty={qty}
-                        disabled={false}
+                );
+              })}
+            </Box>
+            {/* Sections */}
+            <Box sx={{ flexGrow: 1, minWidth: 0, display: 'grid', gap: 3 }}>
+              {visibleCats.map((c) => (
+                <Box
+                  key={c.id}
+                  data-cat-id={c.id}
+                  ref={(el) => { sectionRefs.current[c.id] = el; }}
+                  sx={{ scrollMarginTop: 150 }}
+                >
+                  <Typography variant="h6" fontWeight={800} sx={{ letterSpacing: '-0.01em', mb: 1 }}>
+                    {c.name}
+                    <Typography component="span" variant="body2" color="text.secondary" fontWeight={500} sx={{ ml: 1 }}>
+                      {c.visible.length} item{c.visible.length === 1 ? '' : 's'}
+                    </Typography>
+                  </Typography>
+                  <Box sx={{ display: 'grid', gap: 0 }}>
+                    {c.visible.map((item) => (
+                      <ItemRow
+                        key={item.id}
+                        item={item}
+                        qty={(item.modifierGroups ?? []).length > 0 ? 0 : simpleQty(item.id)}
                         onAdd={() => handleAdd(item)}
                         onDec={() => decSimple(item.id)}
+                        onCustomise={() => setSelected(item)}
                       />
-                    )}
+                    ))}
                   </Box>
                 </Box>
-                {/* Editorial content — compact for the 2-col grid */}
-                <Box sx={{ p: 1.25, pt: 2.75, flexGrow: 1 }}>
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mb: 0.25 }}>
-                    <VegMark veg={!!item.vegetarian} size={12} />
-                    {!activeCat && item._catName && (
-                      <Typography variant="caption" color="text.secondary" noWrap sx={{ textTransform: 'uppercase', letterSpacing: '0.07em', fontSize: 9 }}>
-                        {item._catName}
-                      </Typography>
-                    )}
-                    {customisable && (
-                      <Typography variant="caption" fontWeight={700} color="primary.main" noWrap sx={{ fontSize: 10 }}>
-                        Customisable
-                      </Typography>
-                    )}
-                  </Box>
-                    <Typography variant="subtitle2" fontWeight={700} lineHeight={1.3} sx={{ letterSpacing: '-0.01em' }} className="clamp-1">
-                      {item.name}
-                    </Typography>
-                    {(() => {
-                      // Fix 3: size-variant items show From ₹base + sizes badge,
-                      // single-price items keep flat ₹210 display.
-                      const groups = item.modifierGroups ?? [];
-                      const sizeGroup = groups.find((g) => g.required && g.maxSelections === 1 && (g.options ?? []).length > 1);
-                      if (sizeGroup) {
-                        const base = Number(item.price);
-                        const maxAbs = Math.max(...sizeGroup.options.map((o) => base + Number(o.additionalPrice ?? 0)));
-                        return (
-                          <Typography variant="body2" fontWeight={800} sx={{ fontVariantNumeric: 'tabular-nums', mt: 0.25 }}>
-                            From ₹{base.toFixed(2)}
-                            <Typography component="span" variant="caption" color="text.secondary" sx={{ fontWeight: 400 }}>
-                              {' '}· up to ₹{maxAbs.toFixed(2)}
-                            </Typography>
-                            {item.preparationTimeMinutes ? (
-                              <Typography component="span" variant="caption" color="text.secondary" sx={{ ml: 0.75, fontWeight: 400 }}>
-                                ~{item.preparationTimeMinutes} min
-                              </Typography>
-                            ) : null}
-                          </Typography>
-                        );
-                      }
-                      return (
-                        <Typography variant="body2" fontWeight={800} sx={{ fontVariantNumeric: 'tabular-nums', mt: 0.25 }}>
-                          ₹{Number(item.price).toFixed(2)}
-                          {item.preparationTimeMinutes ? (
-                            <Typography component="span" variant="caption" color="text.secondary" sx={{ ml: 0.75, fontWeight: 400 }}>
-                              ~{item.preparationTimeMinutes} min
-                            </Typography>
-                          ) : null}
-                        </Typography>
-                      );
-                    })()}
-                    {item.description && (
-                      <Typography variant="caption" color="text.secondary" className="clamp-2" sx={{ mt: 0.25, display: '-webkit-box' }}>
-                        {item.description}
-                      </Typography>
-                    )}
-                </Box>
-              </Paper>
-              );
-            })}
+              ))}
+            </Box>
           </Box>
         )}
       </Box>
@@ -588,54 +719,95 @@ function MenuInner() {
       {/* Floating cart bar */}
       {totals.count > 0 && (
         <Paper
-          elevation={4}
+          elevation={8}
           sx={{
             position: 'fixed',
             left: 0,
             right: 0,
-            bottom: 0,
+            bottom: 88,
             mx: 'auto',
-            maxWidth: 720,
-            m: { xs: 1.5, sm: 2 },
+            maxWidth: 688,
+            m: { xs: 2, sm: 2 },
             p: 1.5,
-            borderRadius: 3,
-            border: 1,
-            borderColor: 'divider',
+            pl: 2,
+            borderRadius: 2,
+            backgroundImage: 'linear-gradient(90deg, #9B2F00, #C2410C)',
+            color: '#fff',
             display: 'flex',
             alignItems: 'center',
             gap: 1.5,
-            zIndex: 30,
+            zIndex: 40,
           }}
         >
+          <Avatar sx={{ bgcolor: 'rgba(255,255,255,.15)', width: 36, height: 36 }}>
+            <Sym name="receipt_long" size={20} />
+          </Avatar>
           <Box sx={{ flexGrow: 1, minWidth: 0 }}>
             <Typography variant="subtitle2" fontWeight={800} noWrap sx={{ fontVariantNumeric: 'tabular-nums' }}>
-              {totals.count} item{totals.count === 1 ? '' : 's'} · ₹{totals.amount.toFixed(2)}
+              {totals.count} Item{totals.count === 1 ? '' : 's'} in Order
             </Typography>
-            <Typography variant="caption" color="text.secondary">
-              Extra charges at checkout · Tap to review
+            <Typography variant="h6" fontWeight={800} sx={{ lineHeight: 1.1 }}>
+              ₹{totals.amount.toFixed(0)}
             </Typography>
           </Box>
           <Button
-            variant="text"
-            onClick={() => navigate(withBranch(`${base}/bill`))}
-            sx={{ fontWeight: 700 }}
-          >
-            Bill
-          </Button>
-          <Button
             variant="contained"
             onClick={() => navigate(withBranch(`${base}/cart`))}
-            sx={{ fontWeight: 800 }}
+            endIcon={<Sym name="arrow_forward" size={18} />}
+            sx={{ bgcolor: '#fff', color: '#9B2F00', backgroundImage: 'none', borderRadius: 2, fontWeight: 800, '&:hover': { bgcolor: '#FFF5ED' } }}
           >
-            View Cart →
+            Review & KOT
           </Button>
         </Paper>
       )}
 
       {token && totals.count === 0 && (
-        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', textAlign: 'center', pb: 2 }}>
+        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', textAlign: 'center', pb: 12 }}>
           Session active · refresh-safe, add more rounds anytime
         </Typography>
+      )}
+      {totals.count > 0 && <Box sx={{ pb: 16 }} />}
+
+      <GuestBottomNav
+        base={base}
+        withBranch={withBranch}
+        cart={totals}
+        latestOrderId={latestOrderId}
+        active="menu"
+        onNeedOrder={() => setToast('No orders yet — add dishes first, then track them here.')}
+      />
+      <SessionSheet
+        open={sheetOpen}
+        onClose={() => setSheetOpen(false)}
+        table={table}
+        waiterName={waiterName}
+        orders={sessionOrders}
+        base={base}
+        withBranch={withBranch}
+        navigate={navigate}
+      />
+      {toast && (
+        <Box
+          sx={{
+            position: 'fixed',
+            bottom: 168,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            zIndex: 60,
+            bgcolor: '#1E1B19',
+            color: '#fff',
+            px: 2.5,
+            py: 1.5,
+            borderRadius: 999,
+            fontSize: 14,
+            fontWeight: 600,
+            whiteSpace: 'nowrap',
+            boxShadow: 4,
+          }}
+          onClick={() => setToast(null)}
+        >
+          {toast}
+        </Box>
       )}
     </CustomerLayout>
   );
