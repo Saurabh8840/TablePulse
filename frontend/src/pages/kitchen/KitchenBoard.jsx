@@ -2,7 +2,6 @@ import RefreshIcon from '@mui/icons-material/Refresh';
 import SearchIcon from '@mui/icons-material/Search';
 import VolumeUpIcon from '@mui/icons-material/VolumeUp';
 import VolumeOffIcon from '@mui/icons-material/VolumeOff';
-import { alpha } from '@mui/material/styles';
 import {
   Alert,
   Box,
@@ -11,7 +10,10 @@ import {
   CardContent,
   Chip,
   CircularProgress,
-  Collapse,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
   FormControl,
   InputAdornment,
   InputLabel,
@@ -21,13 +23,13 @@ import {
   Skeleton,
   Switch,
   TextField,
-  ToggleButton,
-  ToggleButtonGroup,
   Typography,
 } from '@mui/material';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import PageHeader from '../../components/layout/PageHeader.jsx';
+import VegMark from '../../components/VegMark.jsx';
 import { useAuth } from '../../hooks/useAuth.js';
+import { buzz, getChime, setChimePref } from '../../utils/devicePrefs.js';
+import { getDashboard } from '../../services/analytics.js';
 import { searchOrders, updateOrderStatus } from '../../services/kitchen.js';
 import { listCategories, listItems, setAvailability } from '../../services/menu.js';
 import { listBranches, listRestaurants } from '../../services/restaurant.js';
@@ -35,39 +37,34 @@ import { listBranches, listRestaurants } from '../../services/restaurant.js';
 const BRANCH_KEY = 'tp_kds_branch';
 const POLL_MS = 7000;
 
-const COLUMNS = [
-  { key: 'NEW', title: 'New', statuses: ['PLACED'], color: 'warning' },
-  { key: 'PREP', title: 'Preparing', statuses: ['ACCEPTED', 'PREPARING'], color: 'info' },
-  { key: 'READY', title: 'Ready', statuses: ['READY'], color: 'success' },
-];
-
-/** Urgency ramp shared by every live ticket: neutral <5m, amber 5–10m, red 10m+. */
-function urgency(mins) {
-  if (mins >= 10) return 'late';
-  if (mins >= 5) return 'warn';
-  return 'fresh';
-}
-
-const URGENCY = {
-  fresh: { label: null, color: 'text.secondary' },
-  warn: { label: 'Running long', color: 'warning.main' },
-  late: { label: 'Prioritize', color: 'error.main' },
-};
-
 const NEXT_ACTION = { PLACED: 'ACCEPTED', ACCEPTED: 'PREPARING', PREPARING: 'READY', READY: 'SERVED' };
-const ACTION_LABEL = { ACCEPTED: 'Accept', PREPARING: 'Preparing →', READY: 'Ready ✓', SERVED: 'Served ✓' };
 
-function elapsed(placedAt) {
-  const ms = Date.now() - new Date(placedAt).getTime();
-  const min = Math.max(0, Math.floor(ms / 60000));
-  if (min < 1) return 'just now';
-  if (min === 1) return '1 min ago';
-  if (min < 60) return `${min} min ago`;
-  return `${Math.floor(min / 60)}h ${min % 60}m ago`;
+function elapsedMin(placedAt, now = Date.now()) {
+  try {
+    return Math.max(0, (now - new Date(placedAt).getTime()) / 60000);
+  } catch {
+    return 0;
+  }
 }
 
-function elapsedMin(placedAt) {
-  return Math.max(0, (Date.now() - new Date(placedAt).getTime()) / 60000);
+function elapsedLabel(placedAt, now = Date.now()) {
+  const m = elapsedMin(placedAt, now);
+  if (m < 1) return 'just now';
+  if (m === 1) return '1 min ago';
+  if (m < 60) return `${Math.floor(m)} min ago`;
+  return `${Math.floor(m / 60)}h ${Math.floor(m % 60)}m ago`;
+}
+
+/** Live mm:ss ticket timer. */
+function clockLabel(placedAt, now = Date.now()) {
+  try {
+    const s = Math.max(0, Math.floor((now - new Date(placedAt).getTime()) / 1000));
+    const mm = String(Math.floor(s / 60)).padStart(2, '0');
+    const ss = String(s % 60).padStart(2, '0');
+    return `${mm}m ${ss}s`;
+  } catch {
+    return '—';
+  }
 }
 
 function chime() {
@@ -92,90 +89,141 @@ function chime() {
   }
 }
 
-function OrderCard({ order, onAction, acting, compact }) {
-  const mins = elapsedMin(order.placedAt);
-  const level = urgency(mins);
-  const meta = URGENCY[level];
-  const action = NEXT_ACTION[order.status];
+function Sym({ name, size = 18 }) {
   return (
-    <Card
-      variant="outlined"
-      sx={{
-        // Literal px radius — numeric values multiply theme.shape and go oval.
-        borderRadius: '14px',
-        overflow: 'hidden',
-        opacity: acting ? 0.6 : 1,
-        ...(level !== 'fresh' && { borderLeft: 4, borderLeftColor: level === 'late' ? 'error.main' : 'warning.main' }),
-      }}
-    >
-      {/* Urgency strip — amber at 5m, red at 10m, any live state */}
-      {meta.label && (
-        <Box sx={{ px: 1.5, py: 0.4, bgcolor: level === 'late' ? 'error.main' : 'warning.main', color: '#fff' }}>
-          <Typography variant="caption" fontWeight={800} sx={{ textTransform: 'uppercase', letterSpacing: '0.08em', fontSize: 10 }}>
-            {meta.label} · {elapsed(order.placedAt)}
-          </Typography>
-        </Box>
-      )}
-      <CardContent sx={{ p: compact ? 1 : 1.5, '&:last-child': { pb: compact ? 1 : 1.5 } }}>
-        <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 1, mb: compact ? 0.5 : 0.75 }}>
-          <Typography variant="h5" fontWeight={800} sx={{ letterSpacing: '-0.01em', lineHeight: 1, fontSize: compact ? 22 : 28 }}>
-            {order.tableNumber}
-          </Typography>
-          <Typography variant="body2" color="text.secondary" fontWeight={600}>
+    <Box component="span" className="material-symbols-outlined" sx={{ fontSize: size, display: 'inline-flex' }}>
+      {name}
+    </Box>
+  );
+}
+
+function OrderCard({ order, vegOf, onAction, acting, onReject, now }) {
+  const mins = elapsedMin(order.placedAt, now);
+  const delayed = mins >= 10;
+  const isNew = order.status === 'PLACED';
+  const isReady = order.status === 'READY';
+  const action = NEXT_ACTION[order.status];
+
+  const headBg = delayed ? '#BA1A1A' : isNew ? '#006A63' : isReady ? '#00632B' : '#C2410C';
+  const subBg = delayed ? '#FFDAD6' : isNew ? '#99EFE5' : isReady ? '#95F8A7' : '#FFDBD0';
+  const subFg = delayed ? '#93000A' : isNew ? '#00201D' : isReady ? '#00210A' : '#7C2602';
+  const subLabel = delayed
+    ? 'DELAYED ALERT: >10 MINS'
+    : isNew
+      ? 'NEW ORDER INCOMING'
+      : isReady
+        ? 'READY TO SERVE'
+        : 'IN PREPARATION';
+
+  return (
+    <Card variant="outlined" sx={{ borderRadius: 2, overflow: 'hidden', opacity: acting ? 0.6 : 1 }}>
+      <Box sx={{ bgcolor: headBg, color: '#fff', px: 2, py: 1.25, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+          <Sym name={delayed ? 'crisis_alert' : isNew ? 'notifications_active' : 'skillet'} size={20} />
+          <Typography variant="subtitle1" fontWeight={800} fontSize={18} sx={{ textTransform: 'uppercase', letterSpacing: '.04em' }}>
             {order.orderNumber}
           </Typography>
-          <Box sx={{ flexGrow: 1 }} />
-          <Typography
-            variant="body2"
-            fontWeight={700}
-            color={meta.color}
-            sx={{ fontVariantNumeric: 'tabular-nums' }}
-          >
-            {elapsed(order.placedAt)}
+        </Box>
+        <Box sx={{ display: 'flex', gap: 0.5, alignItems: 'center', bgcolor: 'rgba(255,255,255,.2)', px: 1, py: 0.5, borderRadius: 1.5 }}>
+          <Sym name="timer" size={16} />
+          <Typography variant="body1" fontWeight={800} fontSize={16} sx={{ fontVariantNumeric: 'tabular-nums' }}>
+            {clockLabel(order.placedAt, now)}
           </Typography>
         </Box>
-        <Box sx={{ display: 'grid', gap: compact ? 0.25 : 0.5, mb: 1 }}>
-          {(order.items ?? []).map((it, idx) => (
-            <Box key={idx}>
-              <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 1 }}>
-                <Typography variant="body1" fontWeight={800} sx={{ fontVariantNumeric: 'tabular-nums', minWidth: 34 }}>
-                  ×{it.quantity}
-                </Typography>
-                <Typography variant="body2" fontWeight={700} sx={{ flexGrow: 1 }}>
-                  {it.menuItemName}
-                </Typography>
-              </Box>
-              {(it.modifiers ?? []).length > 0 && (
-                <Typography variant="caption" color="primary.main" fontWeight={600} sx={{ ml: 5, display: 'block' }}>
-                  {(it.modifiers ?? []).map((m) => m.modifierName).join(', ')}
-                </Typography>
-              )}
-              {it.specialInstructions && (
-                <Box sx={{ ml: 5, mt: 0.25, px: 1, py: 0.5, borderRadius: 1.5, bgcolor: (theme) => alpha(theme.palette.warning.main, 0.14), borderLeft: 3, borderColor: 'warning.main' }}>
-                  <Typography variant="caption" fontWeight={700}>
-                    “{it.specialInstructions}”
-                  </Typography>
-                </Box>
-              )}
-            </Box>
-          ))}
+      </Box>
+      <Box sx={{ bgcolor: subBg, color: subFg, px: 2, py: 0.75, display: 'flex', justifyContent: 'space-between', fontSize: 10, fontWeight: 800, letterSpacing: '.06em' }}>
+        <span>{subLabel}</span>
+        <span>DINE-IN</span>
+      </Box>
+      <CardContent sx={{ p: 2, display: 'grid', gap: 1.25 }}>
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', gap: 1 }}>
+          <Box>
+            <Typography variant="h5" fontWeight={800} fontSize={22} sx={{ lineHeight: 1 }}>
+              Table {order.tableNumber}
+            </Typography>
+            <Typography variant="caption" fontSize={10} color="text.secondary">
+              {elapsedLabel(order.placedAt)}
+            </Typography>
+          </Box>
+          <Box sx={{ textAlign: 'right' }}>
+            <Typography variant="caption" fontSize={10} color="text.secondary" sx={{ display: 'block' }}>
+              Capt: <strong style={{ color: '#1E1B19' }}>{order.waiterName ?? order.servedBy ?? 'House'}</strong>
+            </Typography>
+            <Chip size="small" label={order.status} sx={{ fontSize: 10, fontWeight: 800, mt: 0.25 }} />
+          </Box>
         </Box>
         {order.specialInstructions && (
-          <Box sx={{ mb: 1, px: 1, py: 0.5, borderRadius: 1.5, bgcolor: (theme) => alpha(theme.palette.warning.main, 0.14), borderLeft: 3, borderColor: 'warning.main' }}>
-            <Typography variant="caption" fontWeight={700}>
-              Order note: “{order.specialInstructions}”
+          <Box sx={{ px: 1.25, py: 0.75, borderRadius: 2, bgcolor: 'rgba(180,83,9,.1)', borderLeft: 3, borderColor: 'warning.main' }}>
+            <Typography variant="caption" fontWeight={700} fontSize={12}>
+              “{order.specialInstructions}”
             </Typography>
           </Box>
         )}
+        <Box sx={{ display: 'grid', gap: 0.75 }}>
+          {(order.items ?? []).map((it, idx) => {
+            const veg = vegOf(it.menuItemName);
+            return (
+              <Box key={idx} sx={{ display: 'flex', gap: 1, p: 1, borderRadius: 2, bgcolor: '#FAF2EE', alignItems: 'flex-start' }}>
+                {veg !== null && <VegMark veg={veg} size={14} />}
+                <Box sx={{ flexGrow: 1, minWidth: 0 }}>
+                  <Typography variant="body1" fontWeight={800} fontSize={16}>
+                    {it.quantity}x {it.menuItemName}
+                  </Typography>
+                  {(it.modifiers ?? []).length > 0 && (
+                    <Typography variant="caption" fontSize={10} color="primary.main" fontWeight={600} sx={{ display: 'block' }}>
+                      {(it.modifiers ?? []).map((m) => m.modifierName).join(', ')}
+                    </Typography>
+                  )}
+                  {it.specialInstructions && (
+                    <Typography variant="caption" fontSize={10} color="text.secondary" sx={{ display: 'block' }}>
+                      {it.specialInstructions}
+                    </Typography>
+                  )}
+                </Box>
+              </Box>
+            );
+          })}
+        </Box>
         {action && (
           <Button
             fullWidth
-            variant={order.status === 'PLACED' ? 'contained' : 'outlined'}
+            variant="contained"
             disabled={acting}
             onClick={() => onAction(order, action)}
-            sx={{ borderRadius: 2.5, minHeight: compact ? 40 : 48, fontWeight: 800 }}
+            startIcon={<Sym name={isNew ? 'check_circle' : 'done_all'} size={20} />}
+            sx={{
+              borderRadius: 2,
+              minHeight: 52,
+              fontWeight: 800,
+              ...(isNew
+                ? { bgcolor: '#9B2F00' }
+                : isReady
+                  ? { bgcolor: '#00632B' }
+                  : { bgcolor: '#006A63' }),
+            }}
           >
-            {acting ? 'Updating…' : ACTION_LABEL[action]}
+            {acting
+              ? 'Updating…'
+              : isNew
+                ? 'ACCEPT & START PREP'
+                : isReady
+                  ? 'READY / DISPATCH'
+                  : action === 'READY'
+                    ? 'MARK READY'
+                    : 'START PREP'}
+          </Button>
+        )}
+        {isNew && (
+          <Button
+            fullWidth
+            variant="text"
+            color="error"
+            disabled={acting}
+            onClick={() => onReject(order)}
+            startIcon={<Sym name="cancel" size={18} />}
+            sx={{ borderRadius: 2, fontWeight: 700 }}
+          >
+            Reject / Out of Stock
           </Button>
         )}
       </CardContent>
@@ -190,23 +238,43 @@ export default function KitchenBoard() {
   const [branches, setBranches] = useState([]);
   const [branchId, setBranchId] = useState(() => localStorage.getItem(BRANCH_KEY) ?? '');
   const [orders, setOrders] = useState([]);
+  const [avgPrep, setAvgPrep] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [actingId, setActingId] = useState(null);
-  const [sound, setSound] = useState(true);
-  const [mobileTab, setMobileTab] = useState('NEW');
+  const [sound, setSound] = useState(getChime);
+  const [filter, setFilter] = useState('all'); // all | new | prep | ready | delayed
   const [ticketQuery, setTicketQuery] = useState('');
-  const [compact, setCompact] = useState(false);
-  const [tick, setTick] = useState(0);
-  // 86-board: kitchen-owned availability toggles (Phase 5b). Loaded lazily per restaurant.
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  const [toast, setToast] = useState(null);
+  const [rejectOrder, setRejectOrder] = useState(null);
+  const [rejectReason, setRejectReason] = useState('');
+  const [recallOpen, setRecallOpen] = useState(false);
+  const [servedToday, setServedToday] = useState(null);
+  const [recallLoading, setRecallLoading] = useState(false);
+  // 86-board: kitchen-owned availability toggles.
   const [availOpen, setAvailOpen] = useState(false);
   const [availItems, setAvailItems] = useState(null);
   const [availLoading, setAvailLoading] = useState(false);
   const [availQuery, setAvailQuery] = useState('');
-  const [availMsg, setAvailMsg] = useState(null);
   const knownIds = useRef(new Set());
+  const searchRef = useRef(null);
+  const toastTimer = useRef(null);
 
-  // Fix 2: branch-scoped kitchen staff locked to home branch.
+  const showToast = (msg) => {
+    setToast(msg);
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), 2600);
+  };
+
+  // Shared device pref (profile page reads the same key).
+  const toggleSound = () => {
+    setSound((s) => {
+      setChimePref(!s);
+      return !s;
+    });
+  };
+
   useEffect(() => {
     if (user?.branchId && branchId !== user.branchId) {
       setBranchId(user.branchId);
@@ -214,7 +282,6 @@ export default function KitchenBoard() {
     }
   }, [user, branchId]);
 
-  // Restaurants on mount
   useEffect(() => {
     listRestaurants()
       .then((r) => {
@@ -227,7 +294,6 @@ export default function KitchenBoard() {
       });
   }, []);
 
-  // Branches when restaurant changes
   useEffect(() => {
     if (!restaurantId) {
       setBranches([]);
@@ -236,7 +302,6 @@ export default function KitchenBoard() {
     listBranches(restaurantId)
       .then((r) => {
         setBranches(r.data ?? []);
-        // Keep saved branch if it belongs here, else pick first.
         if (branchId && (r.data ?? []).some((b) => b.id === branchId)) return;
         if (r.data?.length > 0) {
           setBranchId(r.data[0].id);
@@ -253,16 +318,21 @@ export default function KitchenBoard() {
       return;
     }
     try {
-      // Rush-hour poll: live tickets only (server filters + sorts oldest-first).
-      const res = await searchOrders({ branchId, liveOnly: true });
+      const [res, dash] = await Promise.all([
+        searchOrders({ branchId, liveOnly: true }),
+        getDashboard(branchId).catch(() => null),
+      ]);
       const list = res.data ?? [];
-      // Chime on genuinely new PLACED orders (not on first load).
       if (sound && knownIds.current.size > 0) {
         const fresh = list.filter((o) => o.status === 'PLACED' && !knownIds.current.has(o.id));
-        if (fresh.length > 0) chime();
+        if (fresh.length > 0) {
+          chime();
+          buzz([120, 60, 120]);
+        }
       }
       knownIds.current = new Set(list.map((o) => o.id));
       setOrders(list);
+      if (dash?.data?.avgPrepMinutes != null) setAvgPrep(dash.data.avgPrepMinutes);
       setError(null);
     } catch (e) {
       setError(e.message);
@@ -278,25 +348,14 @@ export default function KitchenBoard() {
     return () => clearInterval(t);
   }, [load]);
 
-  // Re-render timers every 30s without refetching.
+  // Live mm:ss timers.
   useEffect(() => {
-    const t = setInterval(() => setTick((n) => n + 1), 30000);
+    const t = setInterval(() => setNowMs(Date.now()), 1000);
     return () => clearInterval(t);
   }, []);
 
-  async function handleAction(order, action) {
-    setActingId(order.id);
-    try {
-      await updateOrderStatus(order.id, action);
-      await load();
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setActingId(null);
-    }
-  }
-
-  async function loadAvail() {
+  // Veg marks + 86 list share one silent menu load.
+  const loadAvail = useCallback(async () => {
     if (!restaurantId) return;
     setAvailLoading(true);
     try {
@@ -310,17 +369,84 @@ export default function KitchenBoard() {
         }),
       );
       setAvailItems(per.flat());
-      setError(null);
     } catch (e) {
       setError(e.message);
     } finally {
       setAvailLoading(false);
     }
+  }, [restaurantId]);
+
+  useEffect(() => {
+    if (restaurantId && availItems === null && !availLoading) loadAvail();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [restaurantId]);
+
+  const vegOf = useCallback(
+    (name) => {
+      const hit = (availItems ?? []).find((i) => i.name === name);
+      return hit && typeof hit.vegetarian === 'boolean' ? hit.vegetarian : null;
+    },
+    [availItems],
+  );
+
+  async function handleAction(order, action) {
+    setActingId(order.id);
+    try {
+      await updateOrderStatus(order.id, action);
+      showToast(action === 'READY' ? 'Ticket dispatched to service runner!' : `Ticket moved to ${action}.`);
+      await load();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setActingId(null);
+    }
   }
 
-  function onAvailToggle() {
-    if (!availOpen && availItems === null) loadAvail();
-    setAvailOpen((o) => !o);
+  async function handleReject() {
+    if (!rejectOrder) return;
+    setActingId(rejectOrder.id);
+    try {
+      await updateOrderStatus(rejectOrder.id, 'REJECTED', rejectReason.trim() || undefined);
+      showToast('Ticket rejected — removed from the customer view.');
+      setRejectOrder(null);
+      setRejectReason('');
+      await load();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setActingId(null);
+    }
+  }
+
+  async function handleStartAll() {
+    const fresh = orders.filter((o) => o.status === 'PLACED');
+    if (fresh.length === 0) return;
+    setActingId('bulk');
+    try {
+      for (const o of fresh) {
+        await updateOrderStatus(o.id, 'ACCEPTED');
+      }
+      showToast(`${fresh.length} ticket${fresh.length === 1 ? '' : 's'} fired to stations.`);
+      await load();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setActingId(null);
+    }
+  }
+
+  async function openRecall() {
+    setRecallOpen(true);
+    setRecallLoading(true);
+    try {
+      const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+      const res = await searchOrders({ branchId, status: 'SERVED', date: today });
+      setServedToday(res.data ?? []);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setRecallLoading(false);
+    }
   }
 
   async function toggleAvail(item) {
@@ -328,200 +454,195 @@ export default function KitchenBoard() {
       const res = await setAvailability(item.id, !item.available);
       const row = res.data ?? { ...item, available: !item.available };
       setAvailItems((list) => (list ?? []).map((i) => (i.id === item.id ? { ...i, ...row } : i)));
-      setAvailMsg(`${item.name} marked ${row.available ? 'available ✓' : 'sold out ✓'}`);
-      setTimeout(() => setAvailMsg(null), 3000);
+      showToast(`${item.name} marked ${row.available ? 'available back on menu' : 'sold out — QR ordering halted'}.`);
     } catch (e) {
       setError(e.message);
     }
   }
 
-  const grouped = useMemo(() => {
-    const map = { NEW: [], PREP: [], READY: [] };
-    const q = ticketQuery.trim().toLowerCase();
-    for (const o of orders) {
-      // Rush search: table number or order number (e.g. "T12", "1042").
-      if (q && !`${o.tableNumber ?? ''} ${o.orderNumber ?? ''}`.toLowerCase().includes(q)) continue;
-      if (o.status === 'PLACED') map.NEW.push(o);
-      else if (o.status === 'ACCEPTED' || o.status === 'PREPARING') map.PREP.push(o);
-      else if (o.status === 'READY') map.READY.push(o);
-    }
-    // Oldest first within each column — longest-waiting ticket on top.
-    // (Server already sorts; this keeps it true after local filtering.)
-    for (const k of Object.keys(map)) {
-      map[k].sort((a, b) => new Date(a.placedAt) - new Date(b.placedAt));
-    }
-    return map;
-  }, [orders, tick, ticketQuery]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Bump bar: 1 = search, 2 = bump oldest, 3 = quick 86.
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.target.matches('input, textarea, select')) return;
+      if (e.key === '1') searchRef.current?.focus();
+      else if (e.key === '2') {
+        const cand = orders.filter((o) => NEXT_ACTION[o.status]);
+        if (cand.length > 0) {
+          cand.sort((a, b) => new Date(a.placedAt) - new Date(b.placedAt));
+          handleAction(cand[0], NEXT_ACTION[cand[0].status]);
+        }
+      } else if (e.key === '3') setAvailOpen(true);
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orders]);
 
-  const activeCount = orders.filter((o) => ['PLACED', 'ACCEPTED', 'PREPARING', 'READY'].includes(o.status)).length;
-  const oldestMs = orders.length > 0
-    ? Math.max(...orders.map((o) => Date.now() - new Date(o.placedAt).getTime()))
-    : 0;
-  const oldestLabel = orders.length > 0 ? elapsed(new Date(Date.now() - oldestMs).toISOString()) : null;
+  const counts = useMemo(() => {
+    const c = { all: orders.length, new: 0, prep: 0, ready: 0, delayed: 0 };
+    for (const o of orders) {
+      if (o.status === 'PLACED') c.new += 1;
+      if (o.status === 'ACCEPTED' || o.status === 'PREPARING') c.prep += 1;
+      if (o.status === 'READY') c.ready += 1;
+      if (['PLACED', 'ACCEPTED', 'PREPARING'].includes(o.status) && elapsedMin(o.placedAt, nowMs) >= 10) c.delayed += 1;
+    }
+    return c;
+  }, [orders, nowMs]);
+
+  const visible = useMemo(() => {
+    const q = ticketQuery.trim().toLowerCase();
+    let list = orders.filter((o) => {
+      if (q && !`${o.tableNumber ?? ''} ${o.orderNumber ?? ''}`.toLowerCase().includes(q)) return false;
+      if (filter === 'new') return o.status === 'PLACED';
+      if (filter === 'prep') return o.status === 'ACCEPTED' || o.status === 'PREPARING';
+      if (filter === 'ready') return o.status === 'READY';
+      if (filter === 'delayed')
+        return ['PLACED', 'ACCEPTED', 'PREPARING'].includes(o.status) && elapsedMin(o.placedAt, nowMs) >= 10;
+      return true;
+    });
+    list = [...list].sort((a, b) => {
+      const da = ['PLACED', 'ACCEPTED', 'PREPARING'].includes(a.status) && elapsedMin(a.placedAt, nowMs) >= 10;
+      const db = ['PLACED', 'ACCEPTED', 'PREPARING'].includes(b.status) && elapsedMin(b.placedAt, nowMs) >= 10;
+      if (da !== db) return da ? -1 : 1;
+      return new Date(a.placedAt) - new Date(b.placedAt);
+    });
+    return list;
+  }, [orders, ticketQuery, filter, nowMs]);
+
+  const branchName = branches.find((b) => b.id === branchId)?.name ?? (user?.branchName ?? 'Kitchen');
 
   return (
-    <Box>
-      <PageHeader
-        title="Kitchen Display"
-        subtitle={
-          activeCount > 0
-            ? `${activeCount} live order${activeCount === 1 ? '' : 's'}${oldestLabel ? ` · oldest ${oldestLabel}` : ''} · refreshes every 7s`
-            : 'No live orders · refreshes every 7s'
-        }
-        actions={
-          <Box sx={{ display: 'flex', gap: 1 }}>
-            <Button
-              size="small"
-              variant="outlined"
-              startIcon={sound ? <VolumeUpIcon /> : <VolumeOffIcon />}
-              onClick={() => setSound((s) => !s)}
-            >
-              {sound ? 'Sound on' : 'Muted'}
+    <Box sx={{ pb: { xs: '64px', md: 0 } }}>
+      {/* control strip */}
+      <Paper variant="outlined" sx={{ p: 2, borderRadius: 2, mb: 2 }}>
+        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1.5, alignItems: 'center', justifyContent: 'space-between' }}>
+          <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center', flexWrap: 'wrap' }}>
+            <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', bgcolor: '#FAF2EE', px: 2, py: 1, borderRadius: 2 }}>
+              <Sym name="receipt_long" size={22} />
+              <Typography variant="subtitle1" fontWeight={800} fontSize={18}>
+                Active Tickets: {counts.all}
+              </Typography>
+              <Box sx={{ display: 'flex', gap: 0.5, ml: 1 }}>
+                <Chip size="small" label={`${counts.new} New`} sx={{ bgcolor: '#006A63', color: '#fff', fontWeight: 800, fontSize: 10 }} />
+                <Chip size="small" label={`${counts.prep} In Prep`} sx={{ bgcolor: '#C2410C', color: '#fff', fontWeight: 800, fontSize: 10 }} />
+                {counts.delayed > 0 && (
+                  <Chip size="small" icon={<Box sx={{ width: 6, height: 6, borderRadius: '50%', bgcolor: '#fff', ml: 1 }} />} label={`${counts.delayed} Delayed`} sx={{ bgcolor: '#BA1A1A', color: '#fff', fontWeight: 800, fontSize: 10 }} />
+                )}
+              </Box>
+            </Box>
+            <Box sx={{ display: { xs: 'none', sm: 'flex' }, gap: 1, alignItems: 'center', bgcolor: '#FAF2EE', px: 2, py: 1, borderRadius: 2 }}>
+              <Sym name="avg_time" size={20} />
+              <Box>
+                <Typography variant="caption" fontSize={10} color="text.secondary" sx={{ textTransform: 'uppercase', display: 'block' }}>
+                  Avg Cook Velocity
+                </Typography>
+                <Typography variant="body1" fontWeight={800} fontSize={16}>
+                  {avgPrep != null ? `${avgPrep} min` : '—'}
+                </Typography>
+              </Box>
+            </Box>
+            {user?.branchId ? (
+              <Alert severity="info" sx={{ py: 0.5 }}>
+                Locked to {branchName} · Contact owner to move locations.
+              </Alert>
+            ) : (
+              <>
+                {restaurants.length > 1 && (
+                  <FormControl size="small" sx={{ minWidth: 170 }}>
+                    <InputLabel>Restaurant</InputLabel>
+                    <Select value={restaurantId} label="Restaurant" onChange={(e) => setRestaurantId(e.target.value)}>
+                      {restaurants.map((r) => (
+                        <MenuItem key={r.id} value={r.id}>{r.name}</MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                )}
+                {branches.length > 1 && (
+                  <FormControl size="small" sx={{ minWidth: 170 }}>
+                    <InputLabel>Location</InputLabel>
+                    <Select
+                      value={branchId}
+                      label="Location"
+                      onChange={(e) => {
+                        setBranchId(e.target.value);
+                        localStorage.setItem(BRANCH_KEY, e.target.value);
+                      }}
+                    >
+                      {branches.map((b) => (
+                        <MenuItem key={b.id} value={b.id}>{b.name}</MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                )}
+              </>
+            )}
+          </Box>
+          <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+            <Button variant="outlined" startIcon={<Sym name="history" size={20} />} onClick={openRecall} sx={{ borderRadius: 2, fontWeight: 700, minHeight: 48 }}>
+              Recall KOT
             </Button>
-            <Button size="small" variant="outlined" startIcon={<RefreshIcon />} onClick={() => { setLoading(true); load(); }}>
-              Refresh
+            <Button variant="outlined" startIcon={sound ? <VolumeUpIcon /> : <VolumeOffIcon />} onClick={toggleSound} sx={{ borderRadius: 2, fontWeight: 700, minHeight: 48 }}>
+              Ding: <strong>&nbsp;{sound ? 'ON' : 'OFF'}</strong>
+            </Button>
+            <Button variant="contained" color="error" startIcon={<Sym name="do_not_disturb_on" size={20} />} onClick={() => setAvailOpen(true)} sx={{ borderRadius: 2, fontWeight: 800, minHeight: 48 }}>
+              Quick 86 Out
             </Button>
           </Box>
-        }
-      />
-      {error && <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>{error}</Alert>}
+        </Box>
 
-      <Paper variant="outlined" sx={{ p: 1.5, borderRadius: 3, mb: 2, display: 'flex', gap: 1.5, flexWrap: 'wrap' }}>
-        {user?.branchId ? (
-          <Alert severity="info" sx={{ flexGrow: 1 }}>
-            Locked to your branch — {user.branchName ? `${user.restaurantName ?? ''} · ${user.branchName}` : 'home kitchen'}. Contact your owner to move branches.
-          </Alert>
-        ) : (
-          <>
-            <FormControl size="small" sx={{ minWidth: 200, flexGrow: 1 }}>
-              <InputLabel>Restaurant</InputLabel>
-              <Select value={restaurantId} label="Restaurant" onChange={(e) => setRestaurantId(e.target.value)}>
-                {restaurants.map((r) => (
-                  <MenuItem key={r.id} value={r.id}>{r.name}</MenuItem>
-                ))}
-              </Select>
-            </FormControl>
-            <FormControl size="small" sx={{ minWidth: 200, flexGrow: 1 }}>
-              <InputLabel>Branch</InputLabel>
-              <Select
-                value={branchId}
-                label="Branch"
-                onChange={(e) => {
-                  setBranchId(e.target.value);
-                  localStorage.setItem(BRANCH_KEY, e.target.value);
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 1.5, mt: 2 }}>
+          <Box className="no-scrollbar" sx={{ display: 'flex', gap: 1, overflowX: 'auto' }}>
+            {[
+              ['all', 'All KOTs', counts.all],
+              ['new', 'New', counts.new],
+              ['prep', 'In Prep', counts.prep],
+              ['ready', 'Ready', counts.ready],
+              ['delayed', 'Delayed', counts.delayed],
+            ].map(([v, l, n]) => (
+              <Button
+                key={v}
+                onClick={() => setFilter(v)}
+                variant={filter === v ? 'contained' : 'outlined'}
+                sx={{
+                  borderRadius: 999,
+                  fontWeight: 800,
+                  whiteSpace: 'nowrap',
+                  minHeight: 44,
+                  ...(filter === v ? { bgcolor: '#9B2F00' } : {}),
                 }}
               >
-                {branches.map((b) => (
-                  <MenuItem key={b.id} value={b.id}>{b.name}</MenuItem>
-                ))}
-              </Select>
-            </FormControl>
-          </>
-        )}
+                {l}
+                <Box component="span" sx={{ ml: 1, px: 1, borderRadius: 999, bgcolor: filter === v ? '#fff' : '#EEE7E3', color: filter === v ? '#9B2F00' : 'inherit', fontSize: 10, fontWeight: 800 }}>
+                  {n}
+                </Box>
+              </Button>
+            ))}
+          </Box>
+          <Box sx={{ display: { xs: 'none', md: 'flex' }, gap: 1, alignItems: 'center', bgcolor: '#FAF2EE', px: 2, py: 0.75, borderRadius: 2, fontSize: 10 }}>
+            <Sym name="offline_bolt" size={16} />
+            Polling 7s · auto-refresh
+          </Box>
+        </Box>
       </Paper>
 
-      {branchId && (
-        <Paper variant="outlined" sx={{ borderRadius: 3, mb: 2 }}>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1.5 }}>
-            <Typography variant="subtitle1" fontWeight={800} sx={{ flexGrow: 1, letterSpacing: '-0.01em' }}>
-              86-board · menu availability
-            </Typography>
-            {availItems !== null && (
-              <Chip
-                size="small"
-                label={`${availItems.filter((i) => !i.available).length} sold out`}
-                color={availItems.some((i) => !i.available) ? 'warning' : 'default'}
-              />
-            )}
-            <Button size="small" variant="outlined" onClick={onAvailToggle}>
-              {availOpen ? 'Hide' : 'Manage'}
-            </Button>
-            <Button size="small" variant="text" onClick={loadAvail} disabled={!availOpen || availLoading}>
-              Refresh
-            </Button>
-          </Box>
-          <Collapse in={availOpen}>
-            <Box sx={{ px: 1.5, pb: 1.5 }}>
-              {availMsg && <Alert severity="success" sx={{ mb: 1 }}>{availMsg}</Alert>}
-              <TextField
-                size="small"
-                fullWidth
-                placeholder="Search items…"
-                value={availQuery}
-                onChange={(e) => setAvailQuery(e.target.value)}
-                sx={{ mb: 1 }}
-              />
-              {availLoading && availItems === null ? (
-                <Box sx={{ display: 'flex', justifyContent: 'center', py: 3 }}>
-                  <CircularProgress size={24} />
-                </Box>
-              ) : (
-                <Box sx={{ display: 'grid', gap: 0.75, maxHeight: 320, overflowY: 'auto' }}>
-                  {(availItems ?? [])
-                    .filter((i) => i.name.toLowerCase().includes(availQuery.trim().toLowerCase()))
-                    .map((i) => (
-                      <Box
-                        key={i.id}
-                        sx={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: 1,
-                          p: 1,
-                          borderRadius: 2,
-                          border: 1,
-                          borderColor: 'divider',
-                          opacity: i.available ? 1 : 0.65,
-                        }}
-                      >
-                        <Switch
-                          size="small"
-                          checked={!!i.available}
-                          onChange={() => toggleAvail(i)}
-                          slotProps={{ input: { 'aria-label': `availability of ${i.name}` } }}
-                        />
-                        <Box sx={{ flexGrow: 1, minWidth: 0 }}>
-                          <Typography variant="body2" fontWeight={700} noWrap>
-                            {i.name}
-                          </Typography>
-                          <Typography variant="caption" color={!i.available ? 'warning.main' : 'text.secondary'} fontWeight={!i.available ? 700 : 400}>
-                            {!i.available && 'Sold out · '}{i.categoryName}
-                            {i.lastChangedBy && ` · by ${i.lastChangedBy}`}
-                          </Typography>
-                        </Box>
-                      </Box>
-                    ))}
-                  {availItems !== null && availItems.length === 0 && (
-                    <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', py: 2 }}>
-                      No items in this restaurant yet.
-                    </Typography>
-                  )}
-                </Box>
-              )}
-            </Box>
-          </Collapse>
-        </Paper>
-      )}
+      {error && <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>{error}</Alert>}
 
       {!branchId ? (
-        <Alert severity="info">Pick a restaurant + branch to see its live orders. Log in as kitchen staff, manager or owner.</Alert>
+        <Alert severity="info">Pick a location to see its live orders. Log in as kitchen staff, manager or owner.</Alert>
       ) : loading && orders.length === 0 ? (
-        <Box sx={{ display: 'grid', gap: 1.5, gridTemplateColumns: { xs: '1fr', md: '1fr 1fr 1fr' } }}>
+        <Box sx={{ display: 'grid', gap: 1.5, gridTemplateColumns: { xs: '1fr', md: '1fr 1fr', xl: 'repeat(3, 1fr)' } }}>
           {[0, 1, 2].map((i) => (
-            <Box key={i}>
-              <Skeleton variant="rounded" height={52} sx={{ mb: 1 }} />
-              <Skeleton variant="rounded" height={220} sx={{ mb: 1.25 }} />
-              <Skeleton variant="rounded" height={160} />
-            </Box>
+            <Skeleton key={i} variant="rectangular" height={280} sx={{ borderRadius: 2 }} />
           ))}
         </Box>
       ) : (
         <>
-          {/* Phone: tab switcher. Tablet/desktop: 3 columns side by side. */}
           <Box sx={{ display: 'flex', gap: 1, mb: 1.5 }}>
             <TextField
+              inputRef={searchRef}
               size="small"
               fullWidth
-              placeholder="Search table or order — T12, 1042…"
+              placeholder="Search table or order — T12, 1042…  (press 1)"
               value={ticketQuery}
               onChange={(e) => setTicketQuery(e.target.value)}
               InputProps={{
@@ -530,102 +651,225 @@ export default function KitchenBoard() {
                     <SearchIcon fontSize="small" />
                   </InputAdornment>
                 ),
-                sx: { borderRadius: 3, bgcolor: 'background.paper' },
+                sx: { borderRadius: 2, bgcolor: 'background.paper' },
               }}
               sx={{ flexGrow: 1 }}
             />
-            <ToggleButtonGroup
-              size="small"
-              exclusive
-              value={compact ? 'COMPACT' : 'COMFY'}
-              onChange={(_, v) => v && setCompact(v === 'COMPACT')}
-              aria-label="ticket density"
-              sx={{ flexShrink: 0 }}
-            >
-              <ToggleButton value="COMFY">Comfy</ToggleButton>
-              <ToggleButton value="COMPACT">Compact</ToggleButton>
-            </ToggleButtonGroup>
-          </Box>
-          <Box sx={{ display: { xs: 'block', md: 'none' }, mb: 1.5 }}>
-            <ToggleButtonGroup
-              fullWidth
-              size="small"
-              exclusive
-              value={mobileTab}
-              onChange={(_, v) => v && setMobileTab(v)}
-            >
-              {COLUMNS.map((c) => (
-                <ToggleButton key={c.key} value={c.key}>
-                  {c.title} ({grouped[c.key].length})
-                </ToggleButton>
-              ))}
-            </ToggleButtonGroup>
+            <Button variant="outlined" size="small" startIcon={<RefreshIcon />} onClick={() => { setLoading(true); load(); }} sx={{ borderRadius: 2, flexShrink: 0 }}>
+              Refresh
+            </Button>
+            <Button variant="outlined" size="small" disabled={actingId === 'bulk' || counts.new === 0} onClick={handleStartAll} sx={{ borderRadius: 2, flexShrink: 0, fontWeight: 800 }}>
+              Start All
+            </Button>
           </Box>
 
+          {visible.length === 0 && (
+            <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', py: 4 }}>
+              {orders.length === 0 ? 'All clear — no live tickets on this board.' : 'No tickets match this filter.'}
+            </Typography>
+          )}
           <Box
             sx={{
               display: 'grid',
               gap: 1.5,
-              gridTemplateColumns: { xs: '1fr', md: '1fr 1fr 1fr' },
+              gridTemplateColumns: { xs: '1fr', md: '1fr 1fr', xl: 'repeat(3, 1fr)' },
+              '@media (min-width:1700px)': { gridTemplateColumns: 'repeat(5, 1fr)' },
               alignItems: 'start',
             }}
           >
-            {COLUMNS.map((col) => (
-              <Box
-                key={col.key}
-                sx={{ display: { xs: mobileTab === col.key ? 'block' : 'none', md: 'block' } }}
-              >
-                <Paper
-                  variant="outlined"
-                  sx={{
-                    p: 1.25, borderRadius: '14px', mb: 1,
-                    bgcolor: (theme) => alpha(theme.palette[col.color].main, 0.1),
-                    display: 'flex', alignItems: 'center', gap: 1,
-                  }}
-                >
-                  <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: `${col.color}.main`, flexShrink: 0 }} />
-                  <Typography
-                    variant="subtitle2"
-                    fontWeight={800}
-                    sx={{ flexGrow: 1, textTransform: 'uppercase', letterSpacing: '0.07em', fontSize: 12 }}
-                  >
-                    {col.title}
-                  </Typography>
-                  {(() => {
-                    const list = grouped[col.key];
-                    const oldest = list.length > 0
-                      ? elapsed(list.reduce((a, b) => (new Date(a.placedAt) < new Date(b.placedAt) ? a : b)).placedAt)
-                      : null;
-                    return (
-                      <>
-                        {oldest && (
-                          <Typography variant="caption" color="text.secondary" sx={{ fontVariantNumeric: 'tabular-nums' }}>
-                            oldest {oldest}
-                          </Typography>
-                        )}
-                        <Chip size="small" label={list.length} color={col.color} />
-                      </>
-                    );
-                  })()}
-                </Paper>
-                <Box sx={{ display: 'grid', gap: 1.25 }}>
-                  {grouped[col.key].length === 0 && (
-                    <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', py: 3 }}>
-                      All clear
-                    </Typography>
-                  )}
-                  {grouped[col.key].map((o) => (
-                    <OrderCard key={o.id} order={o} onAction={handleAction} acting={actingId === o.id} compact={compact} />
-                  ))}
-                </Box>
-              </Box>
+            {visible.map((o) => (
+              <OrderCard key={o.id} order={o} vegOf={vegOf} onAction={handleAction} acting={actingId === o.id} now={nowMs} onReject={(ord) => { setRejectReason(''); setRejectOrder(ord); }} />
             ))}
           </Box>
           <Typography variant="caption" color="text.secondary" sx={{ display: 'block', textAlign: 'center', mt: 2 }}>
-            Board refreshes every 7s · served orders leave automatically
+            Board refreshes every 7s · served orders leave automatically · keys: 1 search · 2 bump oldest · 3 quick 86
           </Typography>
         </>
       )}
+
+      {/* reject dialog */}
+      <Dialog open={!!rejectOrder} onClose={() => setRejectOrder(null)} fullWidth maxWidth="xs">
+        <DialogTitle>Reject {rejectOrder?.orderNumber}?</DialogTitle>
+        <DialogContent sx={{ display: 'grid', gap: 2, pt: 1 }}>
+          <Typography variant="body2" color="text.secondary">
+            The ticket leaves the board and the customer is notified. Optional reason:
+          </Typography>
+          <TextField label="Reason (optional)" value={rejectReason} onChange={(e) => setRejectReason(e.target.value)} placeholder="Out of stock" />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setRejectOrder(null)}>Cancel</Button>
+          <Button color="error" variant="contained" disabled={actingId} onClick={handleReject}>
+            {actingId ? 'Rejecting…' : 'Reject ticket'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* 86 modal */}
+      <Dialog open={availOpen} onClose={() => setAvailOpen(false)} fullWidth maxWidth="sm">
+        <DialogTitle sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+          <Sym name="block" size={24} />
+          <Box sx={{ flexGrow: 1 }}>
+            <Typography variant="h6" fontWeight={800} fontSize={18}>Quick 86 Stockout</Typography>
+            <Typography variant="caption" fontSize={10} color="text.secondary">
+              Instantly locks items on POS & Guest QR menus
+            </Typography>
+          </Box>
+          <Button size="small" onClick={() => setAvailOpen(false)}>✕</Button>
+        </DialogTitle>
+        <DialogContent sx={{ display: 'grid', gap: 1.5 }}>
+          <TextField size="small" fullWidth placeholder="Search dish e.g. Tandoori Roti, Paneer..." value={availQuery} onChange={(e) => setAvailQuery(e.target.value)} />
+          {availLoading && availItems === null ? (
+            <Box sx={{ display: 'flex', justifyContent: 'center', py: 3 }}>
+              <CircularProgress size={24} />
+            </Box>
+          ) : (
+            <Box sx={{ display: 'grid', gap: 1, maxHeight: 320, overflowY: 'auto' }}>
+              {(availItems ?? [])
+                .filter((i) => i.name.toLowerCase().includes(availQuery.trim().toLowerCase()))
+                .map((i) => (
+                  <Box key={i.id} sx={{ display: 'flex', gap: 1, alignItems: 'center', p: 1.5, borderRadius: 2, bgcolor: '#FAF2EE', opacity: i.available ? 1 : 0.75 }}>
+                    <Box sx={{ flexGrow: 1, minWidth: 0 }}>
+                      <Typography variant="body2" fontWeight={800} fontSize={14} noWrap>{i.name}</Typography>
+                      <Typography variant="caption" fontSize={10} color="text.secondary">
+                        {i.categoryName}{!i.available && ' · Sold out'}
+                      </Typography>
+                    </Box>
+                    <Button
+                      size="small"
+                      variant="contained"
+                      color={i.available ? 'error' : 'inherit'}
+                      onClick={() => toggleAvail(i)}
+                      sx={{ borderRadius: 2, fontWeight: 800, flexShrink: 0, ...(i.available ? {} : { bgcolor: '#EEE7E3', color: 'text.secondary' }) }}
+                    >
+                      {i.available ? '86 NOW' : 'Available'}
+                    </Button>
+                  </Box>
+                ))}
+              {availItems !== null && availItems.length === 0 && (
+                <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', py: 2 }}>
+                  No items in this restaurant yet.
+                </Typography>
+              )}
+            </Box>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Switch size="small" checked={sound} onChange={toggleSound} slotProps={{ input: { 'aria-label': 'kitchen chime' } }} />
+          <Typography variant="caption" fontSize={10} color="text.secondary" sx={{ flexGrow: 1, textAlign: 'left' }}>
+            Chime {sound ? 'on' : 'off'}
+          </Typography>
+          <Button variant="contained" onClick={() => setAvailOpen(false)} sx={{ borderRadius: 2, fontWeight: 800 }}>
+            Done
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* recall drawer */}
+      <Dialog open={recallOpen} onClose={() => setRecallOpen(false)} fullWidth maxWidth="sm">
+        <DialogTitle>Today&apos;s completed tickets</DialogTitle>
+        <DialogContent>
+          {recallLoading ? (
+            <Box sx={{ display: 'flex', justifyContent: 'center', py: 3 }}>
+              <CircularProgress size={24} />
+            </Box>
+          ) : (servedToday ?? []).length === 0 ? (
+            <Typography variant="body2" color="text.secondary">Nothing served yet today.</Typography>
+          ) : (
+            <Box sx={{ display: 'grid', gap: 1 }}>
+              {(servedToday ?? []).slice(0, 30).map((o) => (
+                <Box key={o.id} sx={{ display: 'flex', justifyContent: 'space-between', gap: 1, py: 0.75, borderBottom: 1, borderColor: 'divider' }}>
+                  <Typography variant="body2" noWrap>
+                    {o.orderNumber} · T{o.tableNumber}
+                  </Typography>
+                  <Typography variant="body2" fontWeight={700}>
+                    ₹{Number(o.totalAmount ?? 0).toLocaleString('en-IN')}
+                  </Typography>
+                </Box>
+              ))}
+            </Box>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setRecallOpen(false)}>Close</Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* toast */}
+      {toast && (
+        <Box
+          sx={{
+            position: 'fixed',
+            bottom: { xs: 80, md: 24 },
+            left: '50%',
+            transform: 'translateX(-50%)',
+            zIndex: 1400,
+            bgcolor: '#1E1B19',
+            color: '#fff',
+            px: 2.5,
+            py: 1.5,
+            borderRadius: 999,
+            display: 'flex',
+            gap: 1,
+            alignItems: 'center',
+            boxShadow: 4,
+            fontSize: 14,
+            fontWeight: 600,
+            whiteSpace: 'nowrap',
+          }}
+        >
+          <Sym name="check_circle" size={18} />
+          {toast}
+        </Box>
+      )}
+
+      {/* mobile bottom nav */}
+      <Box
+        component="nav"
+        sx={{
+          display: { xs: 'flex', md: 'none' },
+          position: 'fixed',
+          bottom: 0,
+          left: 0,
+          right: 0,
+          zIndex: 1100,
+          bgcolor: 'rgba(255,248,245,0.95)',
+          backdropFilter: 'blur(20px)',
+          justifyContent: 'space-around',
+          alignItems: 'center',
+          height: 64,
+        }}
+      >
+        {[
+          ['receipt_long', 'New', 'new'],
+          ['skillet', 'Prep', 'prep'],
+          ['check_circle', 'Ready', 'ready'],
+          ['block', '86', '86'],
+        ].map(([icon, label, v]) => (
+          <Button
+            key={label}
+            onClick={() => (v === '86' ? setAvailOpen(true) : setFilter(v))}
+            sx={{
+              flexDirection: 'column',
+              gap: 0,
+              minWidth: 56,
+              minHeight: 44,
+              color: filter === v ? '#9B2F00' : 'text.secondary',
+              fontWeight: filter === v ? 800 : 400,
+              fontSize: 10,
+              ...(v === '86' && { color: 'text.secondary', fontWeight: 400 }),
+            }}
+          >
+            <Sym name={icon} size={22} />
+            {label}
+            {v !== '86' && (
+              <Typography component="span" variant="caption" fontSize={10} fontWeight={800}>
+                {counts[v]}
+              </Typography>
+            )}
+          </Button>
+        ))}
+      </Box>
+
     </Box>
   );
 }

@@ -44,7 +44,7 @@ export function useSession(slug, table, branchId, opts = {}) {
             localStorage.removeItem(skey(slug, table));
           }
         }
-        if (!branchId) throw new Error('This QR link is missing its branch. Please re-scan the table code.');
+        if (!branchId) throw new Error('This QR link is incomplete. Please re-scan the table code.');
         const res = await createSession({ branchId, tableNumber: table });
         localStorage.setItem(skey(slug, table), res.data.sessionToken);
         if (alive) {

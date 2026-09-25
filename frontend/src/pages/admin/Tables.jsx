@@ -15,15 +15,19 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
+  FormControl,
   IconButton,
+  InputLabel,
   MenuItem,
+  Select,
   TextField,
   Tooltip,
   Typography,
 } from '@mui/material';
 import { useEffect, useState } from 'react';
-import { Link as RouterLink, useParams } from 'react-router-dom';
+import { Link as RouterLink, useNavigate, useParams } from 'react-router-dom';
 import PageHeader from '../../components/layout/PageHeader.jsx';
+import { listBranches, listRestaurants } from '../../services/restaurant.js';
 import { listStaff } from '../../services/staff.js';
 import { assignTableWaiter, bulkCreateTables, bulkDeleteTables, createTable, fetchQrPng, listTables } from '../../services/tables.js';
 
@@ -31,6 +35,10 @@ const STATUS_COLOR = { AVAILABLE: 'success', OCCUPIED: 'warning', RESERVED: 'inf
 
 export default function Tables() {
   const { branchId } = useParams();
+  const navigate = useNavigate();
+  const [outlets, setOutlets] = useState([]);
+  const [restaurantId, setRestaurantId] = useState('');
+  const [branches, setBranches] = useState([]);
   const [rows, setRows] = useState(null);
   const [error, setError] = useState(null);
   const [addOpen, setAddOpen] = useState(false);
@@ -59,11 +67,57 @@ export default function Tables() {
       .catch(() => setWaiters([]));
   }, [branchId]);
 
+  // Outlet/branch switcher: locate this branch's restaurant, reset branch-scoped UI.
   useEffect(() => {
-    load();
+    setRows(null);
+    setSelected([]);
+    setDeleteResult(null);
+    setAddOpen(false);
+    setBulkOpen(false);
+    setDeleteOpen(false);
+    let alive = true;
+    listRestaurants()
+      .then(async (r) => {
+        if (!alive) return;
+        const list = r.data ?? [];
+        setOutlets(list);
+        for (const o of list) {
+          const b = await listBranches(o.id).catch(() => ({ data: [] }));
+          const blist = b.data ?? [];
+          if (blist.some((x) => x.id === branchId)) {
+            if (!alive) return;
+            setRestaurantId(o.id);
+            setBranches(blist);
+            return;
+          }
+        }
+        if (alive) {
+          setRestaurantId('');
+          setBranches([]);
+        }
+      })
+      .catch(() => {});
     return () => {
+      alive = false;
       if (qr?.url) URL.revokeObjectURL(qr.url);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [branchId]);
+
+  async function onPickRestaurant(id) {
+    setRestaurantId(id);
+    try {
+      const b = await listBranches(id);
+      const blist = b.data ?? [];
+      setBranches(blist);
+      if (blist[0]) navigate(`/admin/branches/${blist[0].id}/tables`);
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  useEffect(() => {
+    load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [branchId]);
 
@@ -164,6 +218,30 @@ export default function Tables() {
           </>
         }
       />
+      {(outlets.length > 1 || branches.length > 1) && (
+        <Box sx={{ display: 'flex', gap: 1.5, flexWrap: 'wrap', mb: 2 }}>
+          {outlets.length > 1 && (
+            <FormControl size="small" sx={{ minWidth: 200, bgcolor: '#fff', borderRadius: 2, '& .MuiOutlinedInput-root': { borderRadius: 2, fontSize: 12, fontWeight: 700 } }}>
+              <InputLabel>Restaurant</InputLabel>
+              <Select value={restaurantId} label="Restaurant" onChange={(e) => onPickRestaurant(e.target.value)}>
+                {outlets.map((o) => (
+                  <MenuItem key={o.id} value={o.id}>{o.name}</MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+          )}
+          {branches.length > 1 && (
+            <FormControl size="small" sx={{ minWidth: 190, bgcolor: '#fff', borderRadius: 2, '& .MuiOutlinedInput-root': { borderRadius: 2, fontSize: 12, fontWeight: 700 } }}>
+              <InputLabel>Location</InputLabel>
+              <Select value={branchId} label="Location" onChange={(e) => navigate(`/admin/branches/${e.target.value}/tables`)}>
+                {branches.map((b) => (
+                  <MenuItem key={b.id} value={b.id}>{b.name}</MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+          )}
+        </Box>
+      )}
       {error && <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>{error}</Alert>}
       {deleteResult && (
         <Alert
